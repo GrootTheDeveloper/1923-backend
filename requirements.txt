@@ -1,0 +1,10 @@
+# dependencies
+fastapi
+uvicorn[standard]
+gunicorn
+motor
+pydantic[email]
+python-dotenv
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
