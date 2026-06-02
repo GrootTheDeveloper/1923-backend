@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from app.config import CORS_ALLOW_ORIGIN_REGEX, FRONTEND_URLS
-from app.routes import auth, projects, tasks
+from app.routes import auth, documents, projects, tasks
 
 app = FastAPI(
-    title="Project Management API",
-    description="API quản lý dự án và công việc",
+    title="FARM CV-JD PDF Reader API",
+    description="FastAPI service for extracting CV/JD text from PDF files and storing results in MongoDB.",
     version="1.0.0",
 )
 
@@ -32,13 +33,14 @@ app.add_middleware(
 
 # Register routes
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 
 
 @app.get("/")
 async def root():
-    return {"message": "Project Management API is running"}
+    return {"message": "FARM CV-JD PDF Reader API is running"}
 
 
 @app.get("/api/health")
