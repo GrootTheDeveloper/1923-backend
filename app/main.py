@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ALLOW_ORIGIN_REGEX, FRONTEND_URLS
-from app.routes import auth, documents, projects, tasks
+from app.routes import auth, cvs, demo, documents, jobs, matches, projects, skills, tasks
 
 app = FastAPI(
     title="FARM CV-JD PDF Reader API",
@@ -34,6 +34,11 @@ app.add_middleware(
 # Register routes
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(cvs.router, prefix="/api/cvs", tags=["CVs"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
+app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
+app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 
@@ -46,3 +51,15 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.on_event("startup")
+async def startup_event():
+    from app.database import create_indexes
+    from app.services.skill_service import load_skill_aliases_from_db
+    
+    # 1. Create database indexes
+    await create_indexes()
+    
+    # 2. Preload skill aliases cache from DB
+    await load_skill_aliases_from_db()

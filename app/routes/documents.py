@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
 from pymongo.errors import PyMongoError
+
+from app.config import MAX_PDF_PAGES
+from app.routes.cvmatch_common import get_optional_user, validate_pdf_upload
 
 from app.database import documents_collection
 from app.services.pdf_extractor import PDFExtractionError, extract_pdf_text
@@ -34,30 +37,21 @@ def serialize_document(document: dict, include_full_text: bool = True) -> dict:
 
 
 @router.post("/extract", status_code=status.HTTP_201_CREATED)
-async def extract_document(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF files are supported.",
-        )
-
+async def extract_document(file: UploadFile = File(...), current_user: dict = Depends(get_optional_user)):
     file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded PDF file is empty.",
-        )
+    validate_pdf_upload(file, file_bytes)
 
     try:
-        extracted = extract_pdf_text(file_bytes, file.filename)
+        extracted = extract_pdf_text(file_bytes, file.filename, max_pages=MAX_PDF_PAGES)
     except PDFExtractionError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Could not extract text from this PDF.",
+            detail=str(exc) or "Could not extract text from this PDF.",
         ) from exc
 
     document = {
         **extracted,
+        "owner_id": current_user["id"],
         "created_at": datetime.now(timezone.utc),
     }
 
@@ -72,9 +66,9 @@ async def extract_document(file: UploadFile = File(...)):
 
 
 @router.get("")
-async def list_documents():
+async def list_documents(current_user: dict = Depends(get_optional_user)):
     try:
-        cursor = documents_collection.find().sort("created_at", -1).limit(20)
+        cursor = documents_collection.find({"owner_id": current_user["id"]}).sort("created_at", -1).limit(20)
         documents = await cursor.to_list(length=20)
     except PyMongoError:
         return []
@@ -83,11 +77,11 @@ async def list_documents():
 
 
 @router.get("/{document_id}")
-async def get_document(document_id: str):
+async def get_document(document_id: str, current_user: dict = Depends(get_optional_user)):
     if not ObjectId.is_valid(document_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
-    document = await documents_collection.find_one({"_id": ObjectId(document_id)})
+    document = await documents_collection.find_one({"_id": ObjectId(document_id), "owner_id": current_user["id"]})
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 

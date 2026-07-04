@@ -5,7 +5,7 @@ class PDFExtractionError(Exception):
     """Raised when a PDF cannot be parsed by the extraction library."""
 
 
-def extract_pdf_text(file_bytes: bytes, filename: str) -> dict:
+def extract_pdf_text(file_bytes: bytes, filename: str, max_pages: int | None = None) -> dict:
     try:
         document = fitz.open(stream=file_bytes, filetype="pdf")
     except Exception as exc:
@@ -15,6 +15,9 @@ def extract_pdf_text(file_bytes: bytes, filename: str) -> dict:
     full_text_parts = []
 
     try:
+        if max_pages is not None and document.page_count > max_pages:
+            raise PDFExtractionError(f"PDF has {document.page_count} pages, which exceeds the {max_pages}-page limit")
+
         for page_index, page in enumerate(document, start=1):
             text = page.get_text("text").strip()
             pages.append(

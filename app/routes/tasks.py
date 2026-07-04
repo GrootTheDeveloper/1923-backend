@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from app.database import tasks_collection
 from app.models.task import TaskCreate, TaskUpdate, TaskResponse
@@ -45,7 +45,7 @@ async def create_task(
     task: TaskCreate, current_user: dict = Depends(get_current_user)
 ):
     """Tạo task mới trong một project."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     doc = {
         "title": task.title,
         "description": task.description,
@@ -84,7 +84,7 @@ async def update_task(
     if not update_data:
         raise HTTPException(status_code=400, detail="Không có dữ liệu cập nhật")
 
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updated_at"] = datetime.now(timezone.utc)
 
     result = await tasks_collection.find_one_and_update(
         {"_id": ObjectId(task_id), "owner_id": current_user["id"]},
