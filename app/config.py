@@ -11,6 +11,15 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "project_management")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # Max attempts for a match job before it is marked permanently failed.
 MATCH_JOB_MAX_TRIES = int(os.getenv("MATCH_JOB_MAX_TRIES", "3"))
+
+# Object storage (MinIO / S3) for raw CV PDFs. When unset, uploads still work but
+# the raw PDF is not persisted (re-parse from raw becomes unavailable).
+S3_ENDPOINT = os.getenv("S3_ENDPOINT", "")
+S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "")
+S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "")
+S3_BUCKET = os.getenv("S3_BUCKET", "lattice-cv-raw")
+S3_SECURE = os.getenv("S3_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+OBJECT_STORAGE_ENABLED = bool(S3_ENDPOINT and S3_ACCESS_KEY and S3_SECRET_KEY)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))

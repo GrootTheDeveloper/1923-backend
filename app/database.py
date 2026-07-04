@@ -27,6 +27,8 @@ async def create_indexes() -> None:
         await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING)])
         await cv_documents_collection.create_index([("status", pymongo.ASCENDING)])
         await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING), ("extracted_data.skills", pymongo.ASCENDING)])
+        # Idempotent import lookup by content hash.
+        await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING), ("file_hash", pymongo.ASCENDING)])
         # jobs: owner_id
         await jobs_collection.create_index([("owner_id", pymongo.ASCENDING)])
         # match_results: job_id, cv_id, owner_id
