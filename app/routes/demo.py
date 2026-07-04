@@ -14,6 +14,7 @@ from app.routes.cvmatch_common import get_optional_user
 from app.routes.cvs import serialize_cv
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
+from app.services.cv_indexing import index_cv
 from app.services.extraction_service import extract_cv_data, extract_jd_data
 from app.services.matching_service import calculate_match
 from app.services.requirement_service import normalize_requirement_config
@@ -242,6 +243,7 @@ async def seed_demo_data(current_user: dict = Depends(get_optional_user)):
         }
         cv_result = await cv_documents_collection.insert_one(cv_document)
         cv_document["_id"] = cv_result.inserted_id
+        await index_cv(str(cv_document["_id"]), owner_id, extracted_cv)
         cv_documents.append(cv_document)
 
     matches = []

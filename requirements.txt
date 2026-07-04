@@ -11,3 +11,4 @@ python-multipart
 PyMuPDF
 arq
 minio
+qdrant-client

@@ -17,7 +17,7 @@ STATUS_RECOMMENDATIONS = [
 ]
 
 
-def calculate_match(cv_document: dict, job: dict) -> dict:
+def calculate_match(cv_document: dict, job: dict, semantic_override: int | None = None) -> dict:
     cv_data = cv_document.get("extracted_data") or {}
     job_data = job.get("extracted_requirements") or {}
     raw_cv = cv_document.get("raw_text", "")
@@ -40,7 +40,12 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
     experience_project_score = score_experience_and_projects(cv_data, job_data, raw_cv, raw_job)
     education_lang_cert_score = score_supporting_requirements(cv_data, job_data, requirements_config)
     completeness_score = score_completeness(cv_data, raw_cv)
-    semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job)
+    # Prefer a real embedding similarity (from vector retrieval) when available;
+    # otherwise fall back to the lexical TF-cosine score.
+    if semantic_override is not None:
+        semantic_score = max(0, min(100, round(semantic_override)))
+    else:
+        semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job)
     penalty_score = requirement_result["penalty_score"]
 
     job_level = (job.get("level") or job_data.get("job_level") or "Junior").strip().capitalize()

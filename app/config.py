@@ -71,3 +71,16 @@ GEMINI_API_URL = os.getenv(
     "GEMINI_API_URL",
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
 )
+
+# --- Embeddings & vector search (Phase 3) ---
+# Provider is swappable via env so the pipeline is not locked to one vendor.
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "gemini").strip().lower()  # gemini | hashing
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+GEMINI_EMBED_URL = os.getenv(
+    "GEMINI_EMBED_URL",
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent",
+)
+QDRANT_URL = os.getenv("QDRANT_URL", "")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "cv_embeddings")
+VECTOR_SEARCH_ENABLED = bool(QDRANT_URL)
