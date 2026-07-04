@@ -5,7 +5,7 @@ from bson import ObjectId
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
 from app.services.extraction_service import extract_cv_data, extract_jd_data
-from app.services.matching_service import calculate_match
+from app.services.matching_service import calculate_match, score_semantic_similarity
 from app.services.skill_service import normalize_skill, normalize_skills
 from app.routes.demo import DEMO_CVS, DEMO_JD_TEXT
 
@@ -75,6 +75,27 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertIn("React", cv_data["skills"])
         self.assertIn("JavaScript", jd_data["required_skills"])
         self.assertIn("Tailwind CSS", jd_data["preferred_skills"])
+
+    def test_semantic_similarity_rewards_related_cv_and_jd_content(self):
+        cv_data = {
+            "skills": ["React", "TypeScript", "REST API"],
+            "projects": ["Built React dashboards with REST API integration, state management, and responsive UI."],
+            "experience": ["Implemented frontend features for analytics products using TypeScript."],
+        }
+        related_job = {
+            "required_skills": ["React", "TypeScript", "REST API"],
+            "responsibilities": ["Build responsive dashboards and integrate REST APIs for analytics workflows."],
+        }
+        unrelated_job = {
+            "required_skills": ["MongoDB", "ETL", "Data Warehouse"],
+            "responsibilities": ["Design batch pipelines for warehouse ingestion and reporting."],
+        }
+
+        related_score = score_semantic_similarity(cv_data, related_job, "", "")
+        unrelated_score = score_semantic_similarity(cv_data, unrelated_job, "", "")
+
+        self.assertGreater(related_score, unrelated_score)
+        self.assertGreaterEqual(related_score, 30)
 
     def test_matching_penalizes_missing_required_skills(self):
         cv_document = {

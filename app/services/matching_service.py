@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import re
+from collections import Counter
 from typing import List
 
 from app.services.requirement_service import normalize_requirement_config
@@ -38,6 +40,7 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
     experience_project_score = score_experience_and_projects(cv_data, job_data, raw_cv, raw_job)
     education_lang_cert_score = score_supporting_requirements(cv_data, job_data, requirements_config)
     completeness_score = score_completeness(cv_data, raw_cv)
+    semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job)
     penalty_score = requirement_result["penalty_score"]
 
     job_level = (job.get("level") or job_data.get("job_level") or "Junior").strip().capitalize()
@@ -48,13 +51,13 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
     else:
         w_req, w_exp, w_edu, w_comp = 0.60, 0.20, 0.15, 0.05
 
-    final_score = round(
+    rule_based_score = round(
         (requirement_result["requirement_score"] * w_req)
         + (experience_project_score * w_exp)
         + (education_lang_cert_score * w_edu)
         + (completeness_score * w_comp)
-        - penalty_score
     )
+    final_score = round((rule_based_score * 0.85) + (semantic_score * 0.15) - penalty_score)
     
     is_knockout_failed = len(requirement_result["knockout_misses"]) > 0
     if is_knockout_failed:
@@ -79,12 +82,15 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
             "experience_project_score": experience_project_score,
             "education_language_certification_score": education_lang_cert_score,
             "completeness_score": completeness_score,
+            "semantic_score": semantic_score,
             "penalty_score": penalty_score,
             "weight_profile": {
                 "requirements": w_req,
                 "experience_project": w_exp,
                 "education_language_certification": w_edu,
-                "completeness": w_comp
+                "completeness": w_comp,
+                "rule_based_total": 0.85,
+                "semantic_similarity": 0.15
             }
         },
         "requirements_config": requirements_config,
@@ -208,6 +214,64 @@ def requirement_matches(requirement: dict, cv_data: dict, raw_cv: str) -> tuple[
     if not matched and requirement_type in {"soft_skill", "domain"}:
         matched = name.casefold() in haystack
     return matched, find_best_overlap_line(raw_cv, name) if matched else ""
+
+
+def score_semantic_similarity(cv_data: dict, job_data: dict, raw_cv: str, raw_job: str) -> int:
+    cv_terms = term_frequencies(semantic_cv_text(cv_data, raw_cv))
+    job_terms = term_frequencies(semantic_job_text(job_data, raw_job))
+    if not cv_terms or not job_terms:
+        return 45
+    return round(cosine_similarity(cv_terms, job_terms) * 100)
+
+
+def semantic_cv_text(cv_data: dict, raw_cv: str) -> str:
+    sections = collect_text_fields(
+        cv_data,
+        ["summary", "skills", "experience", "projects", "education", "certifications", "languages"],
+    )
+    return "\n".join(sections) or raw_cv
+
+
+def semantic_job_text(job_data: dict, raw_job: str) -> str:
+    sections = collect_text_fields(
+        job_data,
+        [
+            "keyword_summary",
+            "required_skills",
+            "preferred_skills",
+            "responsibilities",
+            "education_required",
+            "soft_skills",
+            "languages",
+        ],
+    )
+    required_experience = job_data.get("required_experience")
+    if isinstance(required_experience, dict):
+        sections.extend(str(value) for value in required_experience.values() if value)
+    return "\n".join(sections) or raw_job
+
+
+def collect_text_fields(source: dict, keys: List[str]) -> List[str]:
+    values = []
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if item)
+        elif isinstance(value, dict):
+            values.extend(str(item) for item in value.values() if item)
+        elif value:
+            values.append(str(value))
+    return values
+
+
+def cosine_similarity(left: Counter[str], right: Counter[str]) -> float:
+    shared_terms = set(left).intersection(right)
+    numerator = sum(left[term] * right[term] for term in shared_terms)
+    left_norm = math.sqrt(sum(value * value for value in left.values()))
+    right_norm = math.sqrt(sum(value * value for value in right.values()))
+    if left_norm == 0 or right_norm == 0:
+        return 0
+    return numerator / (left_norm * right_norm)
 
 
 def score_experience_and_projects(cv_data: dict, job_data: dict, raw_cv: str, raw_job: str) -> int:
@@ -412,11 +476,19 @@ def find_best_overlap_line(text: str, target: str) -> str:
 
 
 def content_words(text: str) -> set[str]:
+    return set(content_tokens(text))
+
+
+def term_frequencies(text: str) -> Counter[str]:
+    return Counter(content_tokens(text))
+
+
+def content_tokens(text: str) -> List[str]:
     stop_words = {
         "and", "or", "the", "a", "an", "to", "of", "in", "for", "with", "using", "on", "as", "is", "are", 
         "be", "will", "you", "we", "our", "develop", "project", "team", "build", "system", "management", 
-        "candidate", "skill", "knowledge", "ability", "experience", "building", "implement", "create",
-        "design", "maintain", "collaborate"
+        "candidate", "skill", "skills", "knowledge", "ability", "experience", "building", "implement", "create",
+        "design", "maintain", "collaborate", "requirements", "responsibilities", "required", "preferred"
     }
     words = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.]{2,}", text.casefold())
-    return {word for word in words if word not in stop_words}
+    return [word for word in words if word not in stop_words]
