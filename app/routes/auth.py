@@ -1,12 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import bcrypt
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from bson import ObjectId
-from app.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, RATE_LIMIT_AUTH
 from app.database import users_collection
 from app.models.user import UserRegister, UserLogin, UserResponse, Token
+from app.rate_limit import limiter
 
 router = APIRouter()
 security = HTTPBearer()
@@ -40,7 +41,7 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
-        if user_id is None:
+        if user_id is None or not ObjectId.is_valid(user_id):
             raise HTTPException(status_code=401, detail="Token không hợp lệ")
     except JWTError:
         raise HTTPException(status_code=401, detail="Token không hợp lệ")
@@ -57,7 +58,8 @@ async def get_current_user(
 
 
 @router.post("/register", response_model=UserResponse)
-async def register(user: UserRegister):
+@limiter.limit(RATE_LIMIT_AUTH)
+async def register(request: Request, user: UserRegister):
     """Đăng ký tài khoản mới."""
     # Check email trùng
     existing = await users_collection.find_one({"email": user.email})
@@ -85,7 +87,8 @@ async def register(user: UserRegister):
 
 
 @router.post("/login", response_model=Token)
-async def login(user: UserLogin):
+@limiter.limit(RATE_LIMIT_AUTH)
+async def login(request: Request, user: UserLogin):
     """Đăng nhập và nhận JWT token."""
     db_user = await users_collection.find_one({"email": user.email})
     if not db_user or not verify_password(user.password, db_user["password"]):

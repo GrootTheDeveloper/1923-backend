@@ -228,6 +228,37 @@ class RankingModelTests(unittest.TestCase):
         self.assertEqual(result["score_breakdown"]["ml_rank_source"], "learned:lr-test")
 
 
+class AuthEnforcementTests(unittest.TestCase):
+    def test_no_credentials_rejected_when_demo_off(self):
+        import asyncio
+
+        from fastapi import HTTPException
+
+        import app.routes.cvmatch_common as common
+
+        original = common.ENABLE_DEMO_MODE
+        common.ENABLE_DEMO_MODE = False
+        try:
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(common.get_optional_user(None))
+            self.assertEqual(ctx.exception.status_code, 401)
+        finally:
+            common.ENABLE_DEMO_MODE = original
+
+    def test_demo_user_returned_when_demo_on(self):
+        import asyncio
+
+        import app.routes.cvmatch_common as common
+
+        original = common.ENABLE_DEMO_MODE
+        common.ENABLE_DEMO_MODE = True
+        try:
+            user = asyncio.run(common.get_optional_user(None))
+            self.assertEqual(user["id"], "demo-user")
+        finally:
+            common.ENABLE_DEMO_MODE = original
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def _reload_config(self, env: dict[str, str]):
         saved = {key: os.environ.get(key) for key in env}
@@ -268,6 +299,16 @@ class RuntimeConfigTests(unittest.TestCase):
         )
         try:
             self.assertEqual(config.validate_runtime_config(), [])
+        finally:
+            importlib.reload(config)
+
+    def test_production_rejects_short_secret(self):
+        config = self._reload_config(
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "short", "ENABLE_DEMO_MODE": "false"}
+        )
+        try:
+            problems = config.validate_runtime_config()
+            self.assertTrue(any("too short" in p for p in problems))
         finally:
             importlib.reload(config)
 

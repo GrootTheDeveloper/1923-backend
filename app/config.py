@@ -48,6 +48,10 @@ def validate_runtime_config() -> list[str]:
             problems.append(
                 "JWT_SECRET_KEY is an insecure default. Set a long random secret in production."
             )
+        elif len(JWT_SECRET_KEY) < 32:
+            problems.append(
+                "JWT_SECRET_KEY is too short (<32 chars). Use a long random secret in production."
+            )
         if ENABLE_DEMO_MODE:
             problems.append(
                 "ENABLE_DEMO_MODE must be false in production (demo mode bypasses authentication)."
@@ -90,3 +94,4 @@ RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in 
 RATE_LIMIT_DEFAULT = os.getenv("RATE_LIMIT_DEFAULT", "120/minute")
 RATE_LIMIT_LLM = os.getenv("RATE_LIMIT_LLM", "20/minute")  # endpoints that call Gemini (cost)
 RATE_LIMIT_MATCH = os.getenv("RATE_LIMIT_MATCH", "30/minute")  # embedding + heavy compute
+RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")  # brute-force protection on login/register
