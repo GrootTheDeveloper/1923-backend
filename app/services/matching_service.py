@@ -71,9 +71,32 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
         requirement_items=requirement_result["items"],
         job_data=job_data,
     )
+    recruiter_priority_score = score_recruiter_priority(
+        final_score,
+        semantic_score,
+        missing_required,
+        missing_preferred,
+        requirement_result["knockout_misses"],
+    )
+    match_explanation = build_match_explanation(
+        final_score=final_score,
+        recruiter_priority_score=recruiter_priority_score,
+        match_level="Weak" if is_knockout_failed else classify_score(final_score),
+        semantic_score=semantic_score,
+        experience_project_score=experience_project_score,
+        completeness_score=completeness_score,
+        matched_required=matched_required,
+        matched_preferred=matched_preferred,
+        missing_required=missing_required,
+        missing_preferred=missing_preferred,
+        knockout_misses=requirement_result["knockout_misses"],
+        evidence=evidence,
+    )
 
     return {
         "final_score": final_score,
+        "recruiter_priority_score": recruiter_priority_score,
+        "recruiter_priority": classify_recruiter_priority(recruiter_priority_score, is_knockout_failed),
         "match_level": "Weak" if is_knockout_failed else classify_score(final_score),
         "is_knockout_failed": is_knockout_failed,
         "score_breakdown": {
@@ -103,6 +126,7 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
         "missing_required_skills": missing_required,
         "missing_preferred_skills": missing_preferred,
         "evidence": evidence,
+        "match_explanation": match_explanation,
         "recommendation": build_recommendation(final_score, missing_required, missing_preferred, requirement_result["knockout_misses"]),
     }
 
@@ -414,6 +438,97 @@ def build_evidence(raw_cv: str, raw_job: str, requirement_items: List[dict], job
 
     return evidence[:24]
 
+
+def score_recruiter_priority(
+    final_score: int,
+    semantic_score: int,
+    missing_required: List[str],
+    missing_preferred: List[str],
+    knockout_misses: List[str] | None = None,
+) -> int:
+    priority_score = final_score
+    if not missing_required:
+        priority_score += 5
+    if semantic_score >= 60:
+        priority_score += 4
+    if missing_required:
+        priority_score -= min(20, len(missing_required) * 5)
+    if missing_preferred:
+        priority_score -= min(6, len(missing_preferred) * 2)
+    if knockout_misses:
+        priority_score -= 25
+    return max(0, min(100, round(priority_score)))
+
+
+def classify_recruiter_priority(priority_score: int, is_knockout_failed: bool = False) -> str:
+    if is_knockout_failed:
+        return "Verify knockout gaps"
+    if priority_score >= 82:
+        return "High priority"
+    if priority_score >= 68:
+        return "Shortlist"
+    if priority_score >= 50:
+        return "Review carefully"
+    return "Low priority"
+
+
+def build_match_explanation(
+    final_score: int,
+    recruiter_priority_score: int,
+    match_level: str,
+    semantic_score: int,
+    experience_project_score: int,
+    completeness_score: int,
+    matched_required: List[str],
+    matched_preferred: List[str],
+    missing_required: List[str],
+    missing_preferred: List[str],
+    knockout_misses: List[str],
+    evidence: List[dict],
+) -> dict:
+    strengths = []
+    if matched_required:
+        strengths.append(f"Covers required skills: {', '.join(matched_required[:5])}.")
+    if matched_preferred:
+        strengths.append(f"Also covers preferred skills: {', '.join(matched_preferred[:4])}.")
+    if semantic_score >= 55:
+        strengths.append(f"CV and JD content are aligned overall ({semantic_score}% semantic similarity).")
+    if experience_project_score >= 60:
+        strengths.append("Experience or project evidence overlaps with the JD responsibilities.")
+    if not strengths:
+        strengths.append("The CV has limited direct overlap with the visible JD requirements.")
+
+    risks = []
+    if knockout_misses:
+        risks.append(f"Knockout gaps need verification: {', '.join(knockout_misses[:4])}.")
+    if missing_required:
+        risks.append(f"Missing required skills: {', '.join(missing_required[:5])}.")
+    if missing_preferred:
+        risks.append(f"Missing preferred signals: {', '.join(missing_preferred[:4])}.")
+    if completeness_score < 60:
+        risks.append("CV profile looks incomplete, so the score may be less reliable.")
+    if not risks:
+        risks.append("No critical rule-based gaps were detected from the available CV text.")
+
+    next_steps = []
+    if knockout_misses or missing_required:
+        next_steps.append("Ask the candidate to confirm the missing required or knockout items before shortlisting.")
+    if evidence:
+        next_steps.append("Review the highlighted CV evidence against the JD before moving status forward.")
+    if recruiter_priority_score >= 68 and not knockout_misses:
+        next_steps.append("Consider moving this candidate to recruiter screening.")
+    elif not next_steps:
+        next_steps.append("Keep this candidate as a backup unless the hiring bar changes.")
+
+    return {
+        "summary": (
+            f"{classify_recruiter_priority(recruiter_priority_score, bool(knockout_misses))}: "
+            f"final score {final_score}% ({match_level}), recruiter priority {recruiter_priority_score}%."
+        ),
+        "strengths": strengths[:4],
+        "risks": risks[:4],
+        "next_steps": next_steps[:3],
+    }
 
 def build_recommendation(final_score: int, missing_required: List[str], missing_preferred: List[str], knockout_misses: List[str] | None = None) -> str:
     base = next(message for threshold, message in STATUS_RECOMMENDATIONS if final_score >= threshold)

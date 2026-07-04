@@ -28,6 +28,8 @@ def serialize_match(document: dict) -> dict:
         "filename": cv_snapshot.get("filename", ""),
         "job_title": job_snapshot.get("title", "Untitled Job"),
         "final_score": document.get("final_score", 0),
+        "recruiter_priority_score": document.get("recruiter_priority_score", document.get("final_score", 0)),
+        "recruiter_priority": document.get("recruiter_priority", "Review carefully"),
         "match_level": document.get("match_level", "Weak"),
         "score_breakdown": document.get("score_breakdown", {}),
         "requirements_config": document.get("requirements_config", []),
@@ -40,6 +42,7 @@ def serialize_match(document: dict) -> dict:
         "missing_required_skills": document.get("missing_required_skills", []),
         "missing_preferred_skills": document.get("missing_preferred_skills", []),
         "evidence": document.get("evidence", []),
+        "match_explanation": document.get("match_explanation", {}),
         "recommendation": document.get("recommendation", ""),
         "pipeline_status": document.get("pipeline_status", "New"),
         "note": document.get("note", ""),
@@ -53,6 +56,11 @@ def serialize_match(document: dict) -> dict:
         "updated_at": document.get("updated_at"),
     }
 
+
+def match_sort_key(document: dict) -> tuple[int, int]:
+    final_score = int(document.get("final_score", 0))
+    priority_score = int(document.get("recruiter_priority_score", final_score))
+    return priority_score, final_score
 
 @router.post("/run", status_code=status.HTTP_201_CREATED)
 async def run_matching(request: MatchRunRequest, current_user: dict = Depends(get_optional_user)):
@@ -110,7 +118,7 @@ async def run_matching(request: MatchRunRequest, current_user: dict = Depends(ge
             document["_id"] = insert_result.inserted_id
         results.append(document)
 
-    return sorted([serialize_match(document) for document in results], key=lambda item: item["final_score"], reverse=True)
+    return sorted([serialize_match(document) for document in results], key=match_sort_key, reverse=True)
 
 
 @router.get("")
@@ -122,7 +130,7 @@ async def list_matches(
     if job_id:
         query["job_id"] = object_id_or_404(job_id, "Job")
 
-    cursor = match_results_collection.find(query).sort("final_score", -1)
+    cursor = match_results_collection.find(query).sort([("recruiter_priority_score", -1), ("final_score", -1)])
     documents = await cursor.to_list(length=200)
     return [serialize_match(document) for document in documents]
 

@@ -21,6 +21,12 @@ from app.services.requirement_service import normalize_requirement_config
 router = APIRouter()
 
 
+def match_sort_key(document: dict) -> tuple[int, int]:
+    final_score = int(document.get("final_score", 0))
+    priority_score = int(document.get("recruiter_priority_score", final_score))
+    return priority_score, final_score
+
+
 DEMO_JD_TEXT = """
 Frontend Intern
 Company: Groot Studio
@@ -274,7 +280,7 @@ async def seed_demo_data(current_user: dict = Depends(get_optional_user)):
     return {
         "job": serialize_job(job),
         "cvs": [serialize_cv(document, candidate_by_id.get(document["candidate_id"]), include_full_text=False) for document in cv_documents],
-        "matches": sorted([serialize_match(document) for document in matches], key=lambda item: item["final_score"], reverse=True),
+        "matches": sorted([serialize_match(document) for document in matches], key=match_sort_key, reverse=True),
     }
 
 

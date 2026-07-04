@@ -45,6 +45,8 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertEqual(match["matched_requirements_version"], 2)
         self.assertEqual(match["job_requirements_version"], 3)
         self.assertTrue(match["is_outdated"])
+        self.assertEqual(match["recruiter_priority_score"], 0)
+        self.assertEqual(match["match_explanation"], {})
 
     def test_rule_based_cv_and_jd_extraction(self):
         cv_text = """
@@ -126,6 +128,9 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertIn("JavaScript", result["missing_required_skills"])
         self.assertGreater(result["score_breakdown"]["penalty_score"], 0)
         self.assertLess(result["final_score"], 90)
+        self.assertLessEqual(result["recruiter_priority_score"], result["final_score"])
+        self.assertTrue(result["match_explanation"]["summary"])
+        self.assertTrue(result["match_explanation"]["risks"])
         self.assertTrue(result["evidence"])
 
     def test_demo_data_has_clear_top_frontend_candidate(self):
