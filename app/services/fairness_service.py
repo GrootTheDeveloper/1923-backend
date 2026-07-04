@@ -1,13 +1,16 @@
 """Fairness attribute vault + group fairness metrics.
 
-The vault stores heuristically-inferred sensitive attributes in a SEPARATE
-collection, populated from the full profile *before* PII masking. These attributes
-are used ONLY for offline aggregate measurement (disparate impact, shortlist rate
-by group). The ranking pipeline never reads them — that is what lets us both mask
-PII for scoring and still measure bias.
+The vault stores proxy attributes in a SEPARATE collection, populated from the
+full profile *before* PII masking. These attributes are used ONLY for offline
+aggregate measurement (disparate impact, shortlist rate by group). The ranking
+pipeline never reads them — that is what lets us both mask PII for scoring and
+still measure bias.
 
-Inference here is deliberately simple/heuristic (demo-grade). The architectural
-point is the separation of concerns, not perfect attribute inference.
+We deliberately do NOT infer gender from names: name→gender guessing is
+unreliable and ethically fraught, and a fairness metric built on wrong guesses
+is worse than none. Instead we measure fairness on signals actually present in
+the CV (school tier, region). For production these can be replaced by
+voluntarily self-declared attributes without touching the rest of the pipeline.
 """
 from __future__ import annotations
 
@@ -20,32 +23,10 @@ from app.database import (
     match_results_collection,
 )
 
-_FEMALE_MARKERS = {"thị"}
-_MALE_MARKERS = {"văn"}
-_FEMALE_GIVEN = {"mai", "linh", "huong", "hương", "lan", "hoa", "trang", "thao", "thảo", "ngoc", "ngọc", "hang", "hằng"}
-_MALE_GIVEN = {"minh", "tuan", "tuấn", "hieu", "hiếu", "nam", "quang", "hung", "hùng", "duc", "đức", "khang", "son", "sơn"}
-
 _TOP_SCHOOL = {"bach khoa", "bách khoa", "polytechnic", "university of technology", "national university", "rmit", "fpt university"}
 _NORTH = {"ha noi", "hà nội", "hanoi", "hai phong", "hải phòng"}
 _CENTRAL = {"da nang", "đà nẵng", "hue", "huế", "nha trang"}
 _SOUTH = {"ho chi minh", "hồ chí minh", "hcm", "saigon", "sài gòn", "can tho", "cần thơ"}
-
-
-def infer_gender(name: str) -> str:
-    # Heuristic only. Names may be in either order (VN "Tran Thi Mai" or Western
-    # "Mai Anh Tran"), so scan all tokens rather than assuming a position.
-    tokens = [t for t in (name or "").casefold().split() if t]
-    if any(m in tokens for m in _FEMALE_MARKERS):
-        return "female"
-    if any(m in tokens for m in _MALE_MARKERS):
-        return "male"
-    female_hit = any(t in _FEMALE_GIVEN for t in tokens)
-    male_hit = any(t in _MALE_GIVEN for t in tokens)
-    if female_hit and not male_hit:
-        return "female"
-    if male_hit and not female_hit:
-        return "male"
-    return "unknown"
 
 
 def infer_school_tier(education: List[str]) -> str:
@@ -64,8 +45,8 @@ def infer_region(raw_text: str) -> str:
 
 
 def infer_fairness_attributes(profile: dict, raw_text: str = "") -> Dict[str, str]:
+    # Only signals actually present in the CV — no gender guessing.
     return {
-        "inferred_gender": infer_gender(profile.get("candidate_name", "")),
         "school_tier": infer_school_tier(profile.get("education") or []),
         "region": infer_region(raw_text or " ".join(str(v) for v in profile.values() if isinstance(v, str))),
     }
@@ -129,7 +110,7 @@ async def compute_group_fairness(owner_id: str) -> dict:
     overrides_by_cv = {str(fb.get("cv_id")) for fb in feedback if fb.get("verdict") == "override"}
     dimensions = {}
     alerts: List[str] = []
-    for dimension in ("inferred_gender", "school_tier", "region"):
+    for dimension in ("school_tier", "region"):
         attr_by_cv = {v["cv_id"]: v.get(dimension, "unknown") for v in vault}
         groups = _group_rates(matches, attr_by_cv)
         if not groups:

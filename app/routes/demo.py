@@ -73,7 +73,8 @@ Integrated REST API endpoints for candidate lists, score filters, and status upd
 Wrote Jest unit tests for reusable table and form components.
 
 Education
-Bachelor of Software Engineering, University of Information Technology
+Bachelor of Software Engineering, Ho Chi Minh University of Technology (Bach Khoa)
+Location: Ho Chi Minh City
 
 Languages
 English
@@ -101,7 +102,8 @@ Projects
 Inventory management web app with React, Express, MongoDB, and Docker deployment.
 
 Education
-Bachelor of Computer Science
+Bachelor of Computer Science, FPT University
+Location: Ha Noi
 """,
     },
     {
@@ -122,7 +124,8 @@ Designed mobile-friendly landing pages and converted layouts into responsive HTM
 Created a design system for buttons, colors, and form states.
 
 Education
-Bachelor of Multimedia Design
+Bachelor of Multimedia Design, Van Lang University
+Location: Ho Chi Minh City
 
 Languages
 English
@@ -146,7 +149,8 @@ Created sales analytics reports using Python and SQL.
 Built ETL scripts and charts for business dashboards.
 
 Education
-Bachelor of Information Systems
+Bachelor of Information Systems, Thang Long University
+Location: Ha Noi
 """,
     },
     {
@@ -171,7 +175,8 @@ Projects
 FastAPI project management service with JWT authentication.
 
 Education
-Computer Science student
+Computer Science student, Duy Tan University
+Location: Da Nang
 """,
     },
 ]

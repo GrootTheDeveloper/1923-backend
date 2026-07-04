@@ -189,11 +189,16 @@ class FairnessTests(unittest.TestCase):
         if not result["is_knockout_failed"]:
             self.assertEqual(result["final_score"], max(0, min(100, reconstructed)))
 
-    def test_infer_gender_heuristic(self):
-        from app.services.fairness_service import infer_gender
+    def test_fairness_attributes_have_no_gender(self):
+        from app.services.fairness_service import infer_fairness_attributes
 
-        self.assertEqual(infer_gender("Nguyen Van Minh"), "male")
-        self.assertEqual(infer_gender("Tran Thi Mai"), "female")
+        attrs = infer_fairness_attributes(
+            {"candidate_name": "Tran Thi Mai", "education": ["Bachelor, Bach Khoa University"]},
+            "Based in Ho Chi Minh City.",
+        )
+        self.assertNotIn("inferred_gender", attrs)
+        self.assertEqual(attrs["school_tier"], "top")
+        self.assertEqual(attrs["region"], "south")
 
 
 class RankingModelTests(unittest.TestCase):
