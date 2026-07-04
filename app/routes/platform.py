@@ -13,6 +13,7 @@ from app.queue import enqueue_match_job
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404
 from app.routes.matches import serialize_match
 from app.services.match_runner import run_match_job_inline
+from app.services.ranking_service import maybe_retrain_ranker
 
 router = APIRouter()
 
@@ -91,7 +92,8 @@ async def get_job_matches(job_id: str, current_user: dict = Depends(get_optional
 
 @router.post("/matches/{match_id}/feedback", status_code=status.HTTP_201_CREATED)
 async def create_match_feedback(
-    match_id: str, feedback: MatchFeedbackCreate, current_user: dict = Depends(get_optional_user),
+    match_id: str, feedback: MatchFeedbackCreate, background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_optional_user),
 ):
     match_object_id = object_id_or_404(match_id, "Match")
     match = await match_results_collection.find_one({"_id": match_object_id, "owner_id": current_user["id"]})
@@ -109,4 +111,6 @@ async def create_match_feedback(
         "resource_id": match_id, "metadata": {"feedback_id": str(inserted.inserted_id), "verdict": feedback.verdict},
         "created_at": now,
     })
+    # Feedback is a training label -> learn from it in the background.
+    background_tasks.add_task(maybe_retrain_ranker, current_user["id"])
     return {"id": str(inserted.inserted_id), **model_payload(feedback), "created_at": now}

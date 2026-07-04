@@ -51,6 +51,24 @@ async def load_active_ranking_model(owner_id: str) -> Optional[dict]:
     return await ranking_models_collection.find_one({"owner_id": owner_id, "active": True})
 
 
+async def maybe_retrain_ranker(owner_id: str) -> None:
+    """Auto-retrain in the background after HR labeling actions.
+
+    Only retrains when there are enough labels AND the label set has changed
+    since the last trained model, so it isn't redundant on every click.
+    """
+    matches = await match_results_collection.find({"owner_id": owner_id}).to_list(length=10000)
+    verdicts = await _verdict_by_match(owner_id)
+    labels = [lab for lab in (_binary_label(m, verdicts.get(str(m["_id"]))) for m in matches) if lab is not None]
+    positives = sum(labels)
+    if len(labels) < MIN_TRAIN_SAMPLES or positives == 0 or positives == len(labels):
+        return
+    active = await load_active_ranking_model(owner_id)
+    if active and active.get("labeled_samples") == len(labels) and active.get("positive") == positives:
+        return  # label set unchanged since the last training
+    await train_ranking_model(owner_id)
+
+
 async def _verdict_by_match(owner_id: str) -> Dict[str, str]:
     feedback = await match_feedback_collection.find({"owner_id": owner_id}).to_list(length=10000)
     return {str(item["match_id"]): item.get("verdict") for item in feedback if item.get("match_id")}

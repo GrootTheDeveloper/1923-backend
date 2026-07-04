@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pymongo import ReturnDocument
 
 from app.database import jobs_collection, match_results_collection
 from app.models.cvmatch import MatchRunRequest, MatchStatusUpdate
 from app.routes.cvmatch_common import get_optional_user, object_id_or_404
 from app.services.match_pipeline import retrieve_candidates, upsert_matches
+from app.services.ranking_service import maybe_retrain_ranker
 
 router = APIRouter()
 
@@ -119,6 +120,7 @@ async def get_match(match_id: str, current_user: dict = Depends(get_optional_use
 async def update_match_status(
     match_id: str,
     data: MatchStatusUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_optional_user),
 ):
     document = await match_results_collection.find_one_and_update(
@@ -134,4 +136,6 @@ async def update_match_status(
     )
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found.")
+    # Shortlist/reject creates a training label -> learn from it in the background.
+    background_tasks.add_task(maybe_retrain_ranker, current_user["id"])
     return serialize_match(document)
