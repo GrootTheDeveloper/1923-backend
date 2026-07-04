@@ -71,10 +71,13 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     ml_rank_score = score_recruiter_priority(
         rule_score, semantic_score, missing_required, missing_preferred, requirement_result["knockout_misses"]
     )
-    fairness_risk_score = 0
+    # Fairness risk is an informational flag for human review, NOT a penalty:
+    # de-scoring a candidate for a gap year or their school would itself be biased.
+    fairness = assess_fairness_risk(cv_data)
+    fairness_risk_score = fairness["score"]
     final_score = round(
         (0.30 * rule_score) + (0.25 * semantic_score) + (0.30 * ml_rank_score)
-        + (0.10 * confidence_score) - (0.05 * fairness_risk_score)
+        + (0.10 * confidence_score)
     )
     
     is_knockout_failed = len(requirement_result["knockout_misses"]) > 0
@@ -119,6 +122,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
         "ml_rank_score": ml_rank_score,
         "confidence_score": confidence_score,
         "fairness_risk_score": fairness_risk_score,
+        "fairness_flags": fairness["flags"],
         "recruiter_priority_score": recruiter_priority_score,
         "recruiter_priority": classify_recruiter_priority(recruiter_priority_score, is_knockout_failed),
         "match_level": "Weak" if is_knockout_failed else classify_score(final_score),
@@ -166,6 +170,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
             "auto_reject": False,
             "human_review_required": True,
             "needs_verification": bool(missing_required or requirement_result["knockout_misses"]),
+            "needs_fairness_review": fairness_risk_score > 0,
         },
         "recommendation": build_recommendation(final_score, missing_required, missing_preferred, requirement_result["knockout_misses"]),
     }
@@ -594,6 +599,36 @@ def build_recommendation(final_score: int, missing_required: List[str], missing_
     if missing:
         return f"{base} Improve or verify these gaps: {', '.join(missing)}."
     return f"{base} The CV covers the visible JD skill requirements."
+
+
+GAP_MARKERS = ("gap year", "career break", "career gap", "sabbatical", "gián đoạn", "nghỉ việc")
+PRESTIGE_MARKERS = (
+    "bach khoa", "bách khoa", "polytechnic", "university of technology", "national university",
+    "rmit", "fpt university", "stanford", "mit", "harvard", "oxford", "cambridge", "ivy league",
+)
+
+
+def assess_fairness_risk(cv_data: dict) -> dict:
+    """Flag bias-prone proxy signals for human review. This is informational and
+    must NOT penalize the score. Works off non-PII fields only (name/gender/age
+    are masked before ranking), so it can never re-introduce protected attributes.
+    """
+    body = " ".join(
+        str(item)
+        for key in ("summary", "experience", "projects")
+        for item in (cv_data.get(key, []) if isinstance(cv_data.get(key), list) else [cv_data.get(key, "")])
+    ).casefold()
+    education = " ".join(str(item) for item in (cv_data.get("education") or [])).casefold()
+
+    flags: List[dict] = []
+    score = 0
+    if any(marker in body for marker in GAP_MARKERS):
+        flags.append({"signal": "gap_year", "note": "Career-gap wording present; verify it is not held against the candidate."})
+        score += 30
+    if any(marker in education for marker in PRESTIGE_MARKERS):
+        flags.append({"signal": "school_prestige", "note": "Prestige-school signal present; ensure it does not unfairly inflate ranking."})
+        score += 20
+    return {"score": min(100, score), "flags": flags}
 
 
 def classify_score(score: int) -> str:

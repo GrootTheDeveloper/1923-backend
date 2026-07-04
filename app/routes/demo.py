@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.database import (
     candidates_collection,
     cv_documents_collection,
+    fairness_attributes_collection,
     jobs_collection,
     match_results_collection,
 )
@@ -15,6 +16,7 @@ from app.routes.cvs import serialize_cv
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
 from app.services.cv_indexing import index_cv
+from app.services.fairness_service import store_fairness_attributes
 from app.services.extraction_service import extract_cv_data, extract_jd_data
 from app.services.matching_service import calculate_match
 from app.services.requirement_service import normalize_requirement_config
@@ -244,6 +246,7 @@ async def seed_demo_data(current_user: dict = Depends(get_optional_user)):
         cv_result = await cv_documents_collection.insert_one(cv_document)
         cv_document["_id"] = cv_result.inserted_id
         await index_cv(str(cv_document["_id"]), owner_id, extracted_cv)
+        await store_fairness_attributes(str(cv_document["_id"]), owner_id, extracted_cv, sample["text"])
         cv_documents.append(cv_document)
 
     matches = []
@@ -287,7 +290,12 @@ async def seed_demo_data(current_user: dict = Depends(get_optional_user)):
 
 
 async def clear_demo_data(owner_id: str) -> None:
+    cv_ids = [str(doc["_id"]) for doc in await cv_documents_collection.find(
+        {"owner_id": owner_id, "demo_seed": True}, {"_id": 1}
+    ).to_list(length=1000)]
     await match_results_collection.delete_many({"owner_id": owner_id, "demo_seed": True})
     await cv_documents_collection.delete_many({"owner_id": owner_id, "demo_seed": True})
     await candidates_collection.delete_many({"owner_id": owner_id, "demo_seed": True})
     await jobs_collection.delete_many({"owner_id": owner_id, "demo_seed": True})
+    if cv_ids:
+        await fairness_attributes_collection.delete_many({"owner_id": owner_id, "cv_id": {"$in": cv_ids}})

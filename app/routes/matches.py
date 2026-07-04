@@ -34,6 +34,7 @@ def serialize_match(document: dict) -> dict:
         "ml_rank_score": document.get("ml_rank_score", document.get("score_breakdown", {}).get("ml_rank_score", 0)),
         "confidence_score": document.get("confidence_score", document.get("score_breakdown", {}).get("confidence_score", 0)),
         "fairness_risk_score": document.get("fairness_risk_score", 0),
+        "fairness_flags": document.get("fairness_flags", []),
         "retrieval": document.get("retrieval", {}),
         "decision_support": document.get("decision_support", {"human_review_required": True, "auto_reject": False}),
         "interview_questions": document.get("interview_questions", []),

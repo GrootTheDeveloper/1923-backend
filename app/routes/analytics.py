@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.database import cv_documents_collection, match_feedback_collection, match_jobs_collection, match_results_collection
 from app.routes.cvmatch_common import get_optional_user
+from app.services.fairness_service import compute_group_fairness
 
 router = APIRouter()
 
@@ -32,18 +33,22 @@ async def model_quality(current_user: dict = Depends(get_optional_user)):
 
 @router.get("/fairness")
 async def fairness(current_user: dict = Depends(get_optional_user)):
-    matches = await match_results_collection.find({"owner_id": current_user["id"]}).to_list(length=5000)
+    owner_id = current_user["id"]
+    matches = await match_results_collection.find({"owner_id": owner_id}).to_list(length=5000)
     risk_scores = [item.get("fairness_risk_score", 0) for item in matches]
+    flagged = sum(1 for item in matches if item.get("fairness_risk_score", 0) > 0)
+
+    group_fairness = await compute_group_fairness(owner_id)
     return {
-        "status": "monitoring" if matches else "insufficient_data",
+        "status": group_fairness.get("status", "insufficient_data"),
         "profiles_checked": len(matches),
         "average_fairness_risk": round(sum(risk_scores) / len(risk_scores), 2) if risk_scores else 0,
+        "fairness_flagged_matches": flagged,
         "ranking_uses_pii": False,
         "automatic_rejection_enabled": False,
-        "protected_group_metrics": {
-            "disparate_impact": None, "shortlist_rate": None, "interview_rate": None,
-        },
-        "notice": "Protected-group rates require consented aggregate attributes and a minimum sample size.",
+        "group_fairness": group_fairness,
+        "alerts": group_fairness.get("alerts", []),
+        "notice": "Sensitive attributes are stored in a separate vault and used only for aggregate measurement, never in ranking.",
     }
 
 

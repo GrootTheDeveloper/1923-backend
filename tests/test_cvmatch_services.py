@@ -159,6 +159,43 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertGreater(results[0][1], results[-1][1])
 
 
+class FairnessTests(unittest.TestCase):
+    def test_gap_year_flag_does_not_penalize_score(self):
+        from app.services.matching_service import assess_fairness_risk
+
+        clean = assess_fairness_risk({"summary": "Frontend developer", "experience": ["Built React apps"]})
+        gap = assess_fairness_risk({"summary": "Took a career break in 2021", "experience": ["Built React apps"]})
+        self.assertEqual(clean["score"], 0)
+        self.assertGreater(gap["score"], 0)
+        self.assertTrue(any(f["signal"] == "gap_year" for f in gap["flags"]))
+
+    def test_final_score_excludes_fairness_term(self):
+        # fairness_risk_score is computed but must NOT be subtracted from final_score.
+        cv = {
+            "raw_text": "Career break in 2020. Built React dashboards with Git and Tailwind CSS.",
+            "extracted_data": {
+                "skills": ["React", "Git", "Tailwind CSS"],
+                "summary": "Career break in 2020, then returned to frontend work.",
+                "projects": ["Built React dashboards."],
+            },
+        }
+        job = {"raw_text": "Frontend needs React, Git.", "required_skills": ["React", "Git"], "extracted_requirements": {}}
+        result = calculate_match(cv, job)
+        b = result["score_breakdown"]
+        self.assertGreater(b["fairness_risk_score"], 0)  # gap-year flag fired
+        reconstructed = round(
+            0.30 * b["rule_score"] + 0.25 * b["semantic_score"] + 0.30 * b["ml_rank_score"] + 0.10 * b["confidence_score"]
+        )
+        if not result["is_knockout_failed"]:
+            self.assertEqual(result["final_score"], max(0, min(100, reconstructed)))
+
+    def test_infer_gender_heuristic(self):
+        from app.services.fairness_service import infer_gender
+
+        self.assertEqual(infer_gender("Nguyen Van Minh"), "male")
+        self.assertEqual(infer_gender("Tran Thi Mai"), "female")
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def _reload_config(self, env: dict[str, str]):
         saved = {key: os.environ.get(key) for key in env}

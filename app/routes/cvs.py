@@ -12,6 +12,7 @@ from app.database import candidates_collection, cv_documents_collection, match_r
 from app.models.cvmatch import CVExtractedDataUpdate
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404, validate_pdf_upload
 from app.services.cv_indexing import index_cv
+from app.services.fairness_service import delete_fairness_attributes, store_fairness_attributes
 from app.services.gemini_extraction import extract_cv_data_hybrid
 from app.services.object_storage import cv_object_key, get_cv_pdf, put_cv_pdf, remove_cv_pdf
 from app.services.vector_store import delete_cv_vector
@@ -126,6 +127,9 @@ async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(g
     cv_document["_id"] = result.inserted_id
     # Index the masked profile for semantic retrieval (best-effort; PII-safe).
     await index_cv(str(cv_document["_id"]), current_user["id"], masked_data)
+    # Vault: store sensitive attributes from the UNMASKED profile for offline
+    # fairness measurement only (never read during ranking).
+    await store_fairness_attributes(str(cv_document["_id"]), current_user["id"], extracted_data, extracted_pdf.get("full_text", ""))
     return serialize_cv(cv_document, candidate)
 
 
@@ -263,6 +267,7 @@ async def reparse_cv(cv_id: str, current_user: dict = Depends(get_optional_user)
     )
     # Re-index with the freshly parsed masked profile.
     await index_cv(str(object_id), current_user["id"], masked_data)
+    await store_fairness_attributes(str(object_id), current_user["id"], extracted_data, extracted_pdf.get("full_text", ""))
     candidate = await candidates_collection.find_one({"_id": updated.get("candidate_id")}) if updated.get("candidate_id") else None
     return serialize_cv(updated, candidate)
 
@@ -277,6 +282,7 @@ async def delete_cv(cv_id: str, current_user: dict = Depends(get_optional_user))
     await cv_documents_collection.delete_one({"_id": object_id})
     await match_results_collection.delete_many({"cv_id": object_id})
     await delete_cv_vector(str(object_id))
+    await delete_fairness_attributes(str(object_id), current_user["id"])
     # Best-effort cleanup of the raw object; only if no other CV references the same hash.
     object_key = cv.get("raw_object_key")
     if object_key and not await cv_documents_collection.find_one(
