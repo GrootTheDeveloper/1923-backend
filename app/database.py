@@ -14,6 +14,9 @@ cv_documents_collection = database["cv_documents"]
 jobs_collection = database["jobs"]
 skill_aliases_collection = database["skill_aliases"]
 match_results_collection = database["match_results"]
+match_jobs_collection = database["match_jobs"]
+match_feedback_collection = database["match_feedback"]
+audit_logs_collection = database["audit_logs"]
 
 async def create_indexes() -> None:
     try:
@@ -23,6 +26,7 @@ async def create_indexes() -> None:
         # cv_documents: owner_id, status
         await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING)])
         await cv_documents_collection.create_index([("status", pymongo.ASCENDING)])
+        await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING), ("extracted_data.skills", pymongo.ASCENDING)])
         # jobs: owner_id
         await jobs_collection.create_index([("owner_id", pymongo.ASCENDING)])
         # match_results: job_id, cv_id, owner_id
@@ -37,5 +41,8 @@ async def create_indexes() -> None:
             ("email", pymongo.ASCENDING),
             ("owner_id", pymongo.ASCENDING)
         ])
+        await match_jobs_collection.create_index([("owner_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+        await match_feedback_collection.create_index([("match_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+        await audit_logs_collection.create_index([("owner_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     except Exception as exc:
         print(f"Error creating database indexes: {exc}")

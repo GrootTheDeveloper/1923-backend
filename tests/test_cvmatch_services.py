@@ -1,3 +1,5 @@
+import importlib
+import os
 import unittest
 
 from bson import ObjectId
@@ -155,6 +157,50 @@ class CVMatchServiceTests(unittest.TestCase):
 
         self.assertEqual(results[0][0], "mai-anh-frontend.pdf")
         self.assertGreater(results[0][1], results[-1][1])
+
+
+class RuntimeConfigTests(unittest.TestCase):
+    def _reload_config(self, env: dict[str, str]):
+        saved = {key: os.environ.get(key) for key in env}
+        os.environ.update(env)
+        try:
+            import app.config as config
+
+            return importlib.reload(config)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_development_allows_insecure_defaults(self):
+        config = self._reload_config(
+            {"ENVIRONMENT": "development", "JWT_SECRET_KEY": "dev-secret-key-change-in-production", "ENABLE_DEMO_MODE": "true"}
+        )
+        try:
+            self.assertEqual(config.validate_runtime_config(), [])
+        finally:
+            importlib.reload(config)
+
+    def test_production_rejects_default_secret_and_demo_mode(self):
+        config = self._reload_config(
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "dev-secret-key-change-in-production", "ENABLE_DEMO_MODE": "true"}
+        )
+        try:
+            problems = config.validate_runtime_config()
+            self.assertEqual(len(problems), 2)
+        finally:
+            importlib.reload(config)
+
+    def test_production_accepts_strong_secret_without_demo(self):
+        config = self._reload_config(
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "a-very-long-random-production-secret", "ENABLE_DEMO_MODE": "false"}
+        )
+        try:
+            self.assertEqual(config.validate_runtime_config(), [])
+        finally:
+            importlib.reload(config)
 
 
 if __name__ == "__main__":

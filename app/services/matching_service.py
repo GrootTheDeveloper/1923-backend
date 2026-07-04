@@ -57,7 +57,20 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
         + (education_lang_cert_score * w_edu)
         + (completeness_score * w_comp)
     )
-    final_score = round((rule_based_score * 0.85) + (semantic_score * 0.15) - penalty_score)
+    rule_score = max(0, min(100, rule_based_score - penalty_score))
+    evidence_coverage = ratio_score(
+        sum(1 for item in requirement_result["items"] if item.get("evidence")),
+        len(requirement_result["items"]),
+    ) if requirement_result["items"] else completeness_score
+    confidence_score = round((completeness_score * 0.55) + (evidence_coverage * 0.45))
+    ml_rank_score = score_recruiter_priority(
+        rule_score, semantic_score, missing_required, missing_preferred, requirement_result["knockout_misses"]
+    )
+    fairness_risk_score = 0
+    final_score = round(
+        (0.30 * rule_score) + (0.25 * semantic_score) + (0.30 * ml_rank_score)
+        + (0.10 * confidence_score) - (0.05 * fairness_risk_score)
+    )
     
     is_knockout_failed = len(requirement_result["knockout_misses"]) > 0
     if is_knockout_failed:
@@ -95,6 +108,12 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
 
     return {
         "final_score": final_score,
+        "final_recommendation_score": final_score,
+        "rule_score": rule_score,
+        "semantic_score": semantic_score,
+        "ml_rank_score": ml_rank_score,
+        "confidence_score": confidence_score,
+        "fairness_risk_score": fairness_risk_score,
         "recruiter_priority_score": recruiter_priority_score,
         "recruiter_priority": classify_recruiter_priority(recruiter_priority_score, is_knockout_failed),
         "match_level": "Weak" if is_knockout_failed else classify_score(final_score),
@@ -107,13 +126,21 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
             "completeness_score": completeness_score,
             "semantic_score": semantic_score,
             "penalty_score": penalty_score,
+            "rule_score": rule_score,
+            "ml_rank_score": ml_rank_score,
+            "confidence_score": confidence_score,
+            "fairness_risk_score": fairness_risk_score,
+            "final_recommendation_score": final_score,
             "weight_profile": {
                 "requirements": w_req,
                 "experience_project": w_exp,
                 "education_language_certification": w_edu,
                 "completeness": w_comp,
-                "rule_based_total": 0.85,
-                "semantic_similarity": 0.15
+                "rule_score": 0.30,
+                "semantic_similarity": 0.25,
+                "ml_rank": 0.30,
+                "confidence": 0.10,
+                "fairness_penalty": 0.05,
             }
         },
         "requirements_config": requirements_config,
@@ -127,6 +154,14 @@ def calculate_match(cv_document: dict, job: dict) -> dict:
         "missing_preferred_skills": missing_preferred,
         "evidence": evidence,
         "match_explanation": match_explanation,
+        "interview_questions": build_interview_questions(
+            missing_required, missing_preferred, requirement_result["knockout_misses"]
+        ),
+        "decision_support": {
+            "auto_reject": False,
+            "human_review_required": True,
+            "needs_verification": bool(missing_required or requirement_result["knockout_misses"]),
+        },
         "recommendation": build_recommendation(final_score, missing_required, missing_preferred, requirement_result["knockout_misses"]),
     }
 
@@ -396,12 +431,11 @@ def parse_edu_level(text: str) -> int:
 
 def score_completeness(cv_data: dict, raw_cv: str) -> int:
     fields = [
-        bool(cv_data.get("candidate_name") and cv_data.get("candidate_name") != "Unnamed Candidate"),
-        bool(cv_data.get("email")),
-        bool(cv_data.get("phone")),
         bool(cv_data.get("skills")),
         bool(cv_data.get("education")),
         bool(cv_data.get("experience") or cv_data.get("projects")),
+        bool(cv_data.get("summary")),
+        bool(cv_data.get("certifications") or cv_data.get("languages")),
         len(raw_cv) >= 1200,
     ]
     return round((sum(fields) / len(fields)) * 100)
@@ -529,6 +563,23 @@ def build_match_explanation(
         "risks": risks[:4],
         "next_steps": next_steps[:3],
     }
+
+
+def build_interview_questions(
+    missing_required: List[str], missing_preferred: List[str], knockout_misses: List[str]
+) -> List[dict]:
+    gaps = list(dict.fromkeys(knockout_misses + missing_required + missing_preferred))[:5]
+    if not gaps:
+        return [{
+            "focus": "depth",
+            "question": "Hãy mô tả một quyết định kỹ thuật khó trong dự án gần nhất và bằng chứng về kết quả.",
+            "reason": "Validate the strongest evidence in the CV.",
+        }]
+    return [{
+        "focus": gap,
+        "question": f"Bạn đã áp dụng {gap} trong tình huống thực tế nào? Hãy nêu vai trò và kết quả đo được.",
+        "reason": "CV chưa có đủ bằng chứng; cần xác minh, không mặc định là ứng viên không có kỹ năng.",
+    } for gap in gaps]
 
 def build_recommendation(final_score: int, missing_required: List[str], missing_preferred: List[str], knockout_misses: List[str] | None = None) -> str:
     base = next(message for threshold, message in STATUS_RECOMMENDATIONS if final_score >= threshold)

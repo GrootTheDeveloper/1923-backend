@@ -47,3 +47,15 @@ class MatchStatusUpdate(BaseModel):
     note: Optional[str] = ""
 
 
+class MatchFeedbackCreate(BaseModel):
+    verdict: str = Field(pattern="^(good_match|bad_match|explanation_incorrect|skill_incorrect|override)$")
+    reason: Optional[str] = ""
+    corrected_skills: Optional[List[str]] = None
+    override_score: Optional[int] = Field(default=None, ge=0, le=100)
+
+
+class AsyncMatchRequest(BaseModel):
+    cv_ids: Optional[List[str]] = None
+    top_k: int = Field(default=1000, ge=1, le=5000)
+
+

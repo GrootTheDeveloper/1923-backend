@@ -12,6 +12,7 @@ from app.models.cvmatch import CVExtractedDataUpdate
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404, validate_pdf_upload
 from app.services.gemini_extraction import extract_cv_data_hybrid
 from app.services.pdf_extractor import PDFExtractionError, extract_pdf_text
+from app.services.pii_service import mask_profile
 from app.services.skill_service import normalize_skills
 
 router = APIRouter()
@@ -44,6 +45,8 @@ def serialize_cv(document: dict, candidate: dict | None = None, include_full_tex
         "extraction_method": document.get("extraction_method", "rule_based"),
         "extraction_error": document.get("extraction_error", ""),
         "extracted_data": document.get("extracted_data", {}),
+        "masked_data": document.get("masked_data", {}),
+        "pii_masking": document.get("pii_masking", {"status": "pending"}),
         "owner_id": document.get("owner_id", ""),
         "created_at": document.get("created_at"),
         "updated_at": document.get("updated_at"),
@@ -57,6 +60,7 @@ def serialize_cv(document: dict, candidate: dict | None = None, include_full_tex
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
+@router.post("/import", status_code=status.HTTP_201_CREATED)
 async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(get_optional_user)):
     file_bytes = await file.read()
     validate_pdf_upload(file, file_bytes)
@@ -67,6 +71,7 @@ async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(g
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc) or "Could not read this PDF.") from exc
 
     extracted_data, method, extraction_error = await extract_cv_data_hybrid(extracted_pdf.get("full_text", ""))
+    masked_data, pii_masking = mask_profile(extracted_data)
     now = datetime.now(timezone.utc)
     candidate = await upsert_candidate(extracted_data, current_user["id"], now)
 
@@ -79,6 +84,8 @@ async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(g
         "char_count": extracted_pdf.get("char_count", 0),
         "library_used": extracted_pdf.get("library_used", "PyMuPDF"),
         "extracted_data": extracted_data,
+        "masked_data": masked_data,
+        "pii_masking": pii_masking,
         "status": "Ready",
         "extraction_method": method,
         "extraction_error": extraction_error,
@@ -126,10 +133,17 @@ async def update_cv_extracted_data(
     payload = model_payload(data)
     if "skills" in payload:
         payload["skills"] = normalize_skills(payload["skills"])
+    masked_data, pii_masking = mask_profile(payload)
 
     document = await cv_documents_collection.find_one_and_update(
         {"_id": object_id, "owner_id": current_user["id"]},
-        {"$set": {"extracted_data": payload, "status": "Ready", "updated_at": datetime.now(timezone.utc)}},
+        {"$set": {
+            "extracted_data": payload,
+            "masked_data": masked_data,
+            "pii_masking": pii_masking,
+            "status": "Ready",
+            "updated_at": datetime.now(timezone.utc),
+        }},
         return_document=ReturnDocument.AFTER,
     )
     if not document:
@@ -150,6 +164,27 @@ async def update_cv_extracted_data(
         )
     candidate = await candidates_collection.find_one({"_id": document.get("candidate_id")})
     return serialize_cv(document, candidate)
+
+
+@router.get("/{cv_id}/parsed")
+async def get_parsed_cv(cv_id: str, current_user: dict = Depends(get_optional_user)):
+    document = await cv_documents_collection.find_one(
+        {"_id": object_id_or_404(cv_id, "CV"), "owner_id": current_user["id"]}
+    )
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV not found.")
+    return {
+        "cv_id": cv_id,
+        "status": document.get("status", "Ready"),
+        "parsed": document.get("extracted_data", {}),
+        "ranking_profile": document.get("masked_data", {}),
+        "pii_masking": document.get("pii_masking", {}),
+        "parser": {
+            "method": document.get("extraction_method", "rule_based"),
+            "version": document.get("parser_version", "mvp-1"),
+            "error": document.get("extraction_error", ""),
+        },
+    }
 
 
 @router.delete("/{cv_id}", status_code=status.HTTP_204_NO_CONTENT)

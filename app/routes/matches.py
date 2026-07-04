@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pymongo import ReturnDocument
 
-from app.database import cv_documents_collection, jobs_collection, match_results_collection
+from app.database import jobs_collection, match_results_collection
 from app.models.cvmatch import MatchRunRequest, MatchStatusUpdate
 from app.routes.cvmatch_common import get_optional_user, object_id_or_404
-from app.services.matching_service import calculate_match
+from app.services.match_pipeline import retrieve_candidates, upsert_matches
 
 router = APIRouter()
 
@@ -28,6 +28,15 @@ def serialize_match(document: dict) -> dict:
         "filename": cv_snapshot.get("filename", ""),
         "job_title": job_snapshot.get("title", "Untitled Job"),
         "final_score": document.get("final_score", 0),
+        "final_recommendation_score": document.get("final_recommendation_score", document.get("final_score", 0)),
+        "rule_score": document.get("rule_score", document.get("score_breakdown", {}).get("rule_score", 0)),
+        "semantic_score": document.get("semantic_score", document.get("score_breakdown", {}).get("semantic_score", 0)),
+        "ml_rank_score": document.get("ml_rank_score", document.get("score_breakdown", {}).get("ml_rank_score", 0)),
+        "confidence_score": document.get("confidence_score", document.get("score_breakdown", {}).get("confidence_score", 0)),
+        "fairness_risk_score": document.get("fairness_risk_score", 0),
+        "retrieval": document.get("retrieval", {}),
+        "decision_support": document.get("decision_support", {"human_review_required": True, "auto_reject": False}),
+        "interview_questions": document.get("interview_questions", []),
         "recruiter_priority_score": document.get("recruiter_priority_score", document.get("final_score", 0)),
         "recruiter_priority": document.get("recruiter_priority", "Review carefully"),
         "match_level": document.get("match_level", "Weak"),
@@ -64,60 +73,19 @@ def match_sort_key(document: dict) -> tuple[int, int]:
 
 @router.post("/run", status_code=status.HTTP_201_CREATED)
 async def run_matching(request: MatchRunRequest, current_user: dict = Depends(get_optional_user)):
+    """Synchronous matching. Delegates to the shared match pipeline so scoring/retrieval
+    logic lives in one place (same code path as the async ``/jobs/{id}/match`` job)."""
     job_id = object_id_or_404(request.job_id, "Job")
     job = await jobs_collection.find_one({"_id": job_id, "owner_id": current_user["id"]})
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
-    cv_query = {"owner_id": current_user["id"], "status": "Ready"}
-    if request.cv_ids:
-        cv_query["_id"] = {"$in": [object_id_or_404(cv_id, "CV") for cv_id in request.cv_ids]}
-
-    cvs = await cv_documents_collection.find(cv_query).to_list(length=200)
-    if not cvs:
+    cv_ids = [object_id_or_404(cv_id, "CV") for cv_id in request.cv_ids] if request.cv_ids else None
+    candidates = await retrieve_candidates(job, current_user["id"], cv_ids, top_k=200)
+    if not candidates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No ready CVs found for matching.")
 
-    job_requirements_version = int(job.get("requirements_version", 1))
-    results = []
-    for cv_document in cvs:
-        existing = await match_results_collection.find_one(
-            {"job_id": job["_id"], "cv_id": cv_document["_id"], "owner_id": current_user["id"]}
-        )
-        match_payload = calculate_match(cv_document, job)
-        now = datetime.now(timezone.utc)
-        document = {
-            **match_payload,
-            "job_id": job["_id"],
-            "cv_id": cv_document["_id"],
-            "owner_id": current_user["id"],
-            "pipeline_status": existing.get("pipeline_status", "New") if existing else "New",
-            "note": existing.get("note", "") if existing else "",
-            "matched_requirements_version": job_requirements_version,
-            "job_requirements_version": job_requirements_version,
-            "is_outdated": False,
-            "outdated_reason": "",
-            "cv_snapshot": {
-                "candidate_name": cv_document.get("extracted_data", {}).get("candidate_name", "Unnamed Candidate"),
-                "email": cv_document.get("extracted_data", {}).get("email", ""),
-                "filename": cv_document.get("filename", ""),
-            },
-            "job_snapshot": {
-                "title": job.get("title", "Untitled Job"),
-                "company": job.get("company", ""),
-                "requirements_version": job_requirements_version,
-            },
-            "created_at": existing.get("created_at", now) if existing else now,
-            "updated_at": now,
-        }
-
-        if existing:
-            await match_results_collection.replace_one({"_id": existing["_id"]}, {**document, "_id": existing["_id"]})
-            document["_id"] = existing["_id"]
-        else:
-            insert_result = await match_results_collection.insert_one(document)
-            document["_id"] = insert_result.inserted_id
-        results.append(document)
-
+    results = await upsert_matches(job, candidates, current_user["id"])
     return sorted([serialize_match(document) for document in results], key=match_sort_key, reverse=True)
 
 
