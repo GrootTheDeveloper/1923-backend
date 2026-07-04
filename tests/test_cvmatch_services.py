@@ -196,6 +196,33 @@ class FairnessTests(unittest.TestCase):
         self.assertEqual(infer_gender("Tran Thi Mai"), "female")
 
 
+class RankingModelTests(unittest.TestCase):
+    def test_ndcg_rewards_correct_order(self):
+        from app.services.ranking_model import ndcg_at_k
+
+        self.assertEqual(ndcg_at_k([2, 1, 0], 3), 1.0)  # already ideal
+        self.assertLess(ndcg_at_k([0, 1, 2], 3), 1.0)  # worst order scores lower
+
+    def test_logistic_learns_separable_labels(self):
+        from app.services.ranking_model import predict_ml_rank, train_logistic
+
+        # High rule_score -> relevant, low -> not. Features are 6-dim (rule first).
+        X = [[0.9, 0.5, 0.5, 0.5, 0.5, 0.5], [0.1, 0.5, 0.5, 0.5, 0.5, 0.5]] * 6
+        y = [1, 0] * 6
+        weights, bias = train_logistic(X, y)
+        model = {"weights": weights, "bias": bias}
+        high = predict_ml_rank(model, {"rule_score": 95, "semantic_score": 50, "confidence_score": 50})
+        low = predict_ml_rank(model, {"rule_score": 5, "semantic_score": 50, "confidence_score": 50})
+        self.assertGreater(high, low)
+
+    def test_calculate_match_uses_learned_model_source(self):
+        cv = {"raw_text": "React Git", "extracted_data": {"skills": ["React", "Git"]}}
+        job = {"raw_text": "React Git", "required_skills": ["React", "Git"], "extracted_requirements": {}}
+        model = {"version": "lr-test", "weights": [1, 0, 0, 0, 0, 0], "bias": -0.5}
+        result = calculate_match(cv, job, ranking_model=model)
+        self.assertEqual(result["score_breakdown"]["ml_rank_source"], "learned:lr-test")
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def _reload_config(self, env: dict[str, str]):
         saved = {key: os.environ.get(key) for key in env}

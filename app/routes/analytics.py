@@ -7,8 +7,22 @@ from fastapi import APIRouter, Depends
 from app.database import cv_documents_collection, match_feedback_collection, match_jobs_collection, match_results_collection
 from app.routes.cvmatch_common import get_optional_user
 from app.services.fairness_service import compute_group_fairness
+from app.services.ranking_service import evaluate_current_ranking, load_active_ranking_model, train_ranking_model
 
 router = APIRouter()
+
+
+@router.get("/ranking-eval")
+async def ranking_eval(current_user: dict = Depends(get_optional_user)):
+    result = await evaluate_current_ranking(current_user["id"])
+    model = await load_active_ranking_model(current_user["id"])
+    result["active_model"] = model.get("version") if model else None
+    return result
+
+
+@router.post("/train-ranker")
+async def train_ranker(current_user: dict = Depends(get_optional_user)):
+    return await train_ranking_model(current_user["id"])
 
 
 @router.get("/model-quality")

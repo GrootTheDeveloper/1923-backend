@@ -9,6 +9,7 @@ from app.services.cv_indexing import job_embedding_text
 from app.services.embedding_service import get_embedding_provider
 from app.services.matching_service import calculate_match
 from app.services.pii_service import mask_profile
+from app.services.ranking_service import load_active_ranking_model
 from app.services.vector_store import search_cv_vectors
 
 
@@ -68,6 +69,7 @@ async def retrieve_candidates(job: dict, owner_id: str, cv_ids: list[ObjectId] |
 
 async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict]:
     job_version = int(job.get("requirements_version", 1))
+    ranking_model = await load_active_ranking_model(owner_id)
     results = []
     for cv_document in cvs:
         existing = await match_results_collection.find_one(
@@ -78,7 +80,8 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
             masked_profile, _ = mask_profile(cv_document.get("extracted_data") or {})
         vector_score = cv_document.get("_vector_score")
         match_payload = calculate_match(
-            {**cv_document, "extracted_data": masked_profile}, job, semantic_override=vector_score
+            {**cv_document, "extracted_data": masked_profile}, job,
+            semantic_override=vector_score, ranking_model=ranking_model,
         )
         now = datetime.now(timezone.utc)
         original_profile = cv_document.get("extracted_data") or {}

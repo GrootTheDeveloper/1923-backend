@@ -20,6 +20,8 @@ audit_logs_collection = database["audit_logs"]
 # Sensitive attributes stored ONLY for offline fairness measurement. Never read
 # by the ranking pipeline.
 fairness_attributes_collection = database["fairness_attributes"]
+# Trained learning-to-rank models (lightweight registry).
+ranking_models_collection = database["ranking_models"]
 
 async def create_indexes() -> None:
     try:
@@ -50,5 +52,6 @@ async def create_indexes() -> None:
         await match_feedback_collection.create_index([("match_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
         await audit_logs_collection.create_index([("owner_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
         await fairness_attributes_collection.create_index([("owner_id", pymongo.ASCENDING), ("cv_id", pymongo.ASCENDING)], unique=True)
+        await ranking_models_collection.create_index([("owner_id", pymongo.ASCENDING), ("active", pymongo.ASCENDING)])
     except Exception as exc:
         print(f"Error creating database indexes: {exc}")

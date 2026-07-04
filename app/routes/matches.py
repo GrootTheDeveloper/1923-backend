@@ -32,6 +32,7 @@ def serialize_match(document: dict) -> dict:
         "rule_score": document.get("rule_score", document.get("score_breakdown", {}).get("rule_score", 0)),
         "semantic_score": document.get("semantic_score", document.get("score_breakdown", {}).get("semantic_score", 0)),
         "ml_rank_score": document.get("ml_rank_score", document.get("score_breakdown", {}).get("ml_rank_score", 0)),
+        "ml_rank_source": document.get("score_breakdown", {}).get("ml_rank_source", "heuristic_proxy"),
         "confidence_score": document.get("confidence_score", document.get("score_breakdown", {}).get("confidence_score", 0)),
         "fairness_risk_score": document.get("fairness_risk_score", 0),
         "fairness_flags": document.get("fairness_flags", []),

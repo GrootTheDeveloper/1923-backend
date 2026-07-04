@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from typing import List
 
+from app.services.ranking_model import predict_ml_rank
 from app.services.requirement_service import normalize_requirement_config
 from app.services.skill_service import normalize_skills
 
@@ -17,7 +18,7 @@ STATUS_RECOMMENDATIONS = [
 ]
 
 
-def calculate_match(cv_document: dict, job: dict, semantic_override: int | None = None) -> dict:
+def calculate_match(cv_document: dict, job: dict, semantic_override: int | None = None, ranking_model: dict | None = None) -> dict:
     cv_data = cv_document.get("extracted_data") or {}
     job_data = job.get("extracted_requirements") or {}
     raw_cv = cv_document.get("raw_text", "")
@@ -68,9 +69,22 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
         len(requirement_result["items"]),
     ) if requirement_result["items"] else completeness_score
     confidence_score = round((completeness_score * 0.55) + (evidence_coverage * 0.45))
-    ml_rank_score = score_recruiter_priority(
-        rule_score, semantic_score, missing_required, missing_preferred, requirement_result["knockout_misses"]
-    )
+    ml_features = {
+        "rule_score": rule_score,
+        "semantic_score": semantic_score,
+        "experience_project_score": experience_project_score,
+        "education_language_certification_score": education_lang_cert_score,
+        "completeness_score": completeness_score,
+        "confidence_score": confidence_score,
+    }
+    if ranking_model:
+        ml_rank_score = predict_ml_rank(ranking_model, ml_features)
+        ml_rank_source = f"learned:{ranking_model.get('version', 'v?')}"
+    else:
+        ml_rank_score = score_recruiter_priority(
+            rule_score, semantic_score, missing_required, missing_preferred, requirement_result["knockout_misses"]
+        )
+        ml_rank_source = "heuristic_proxy"
     # Fairness risk is an informational flag for human review, NOT a penalty:
     # de-scoring a candidate for a gap year or their school would itself be biased.
     fairness = assess_fairness_risk(cv_data)
@@ -120,6 +134,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
         "rule_score": rule_score,
         "semantic_score": semantic_score,
         "ml_rank_score": ml_rank_score,
+        "ml_rank_source": ml_rank_source,
         "confidence_score": confidence_score,
         "fairness_risk_score": fairness_risk_score,
         "fairness_flags": fairness["flags"],
@@ -137,6 +152,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
             "penalty_score": penalty_score,
             "rule_score": rule_score,
             "ml_rank_score": ml_rank_score,
+            "ml_rank_source": ml_rank_source,
             "confidence_score": confidence_score,
             "fairness_risk_score": fairness_risk_score,
             "final_recommendation_score": final_score,
