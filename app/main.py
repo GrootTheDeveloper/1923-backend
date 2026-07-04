@@ -1,5 +1,10 @@
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import (
     CORS_ALLOW_ORIGIN_REGEX,
@@ -8,6 +13,8 @@ from app.config import (
     IS_PRODUCTION,
     validate_runtime_config,
 )
+from app.observability import ObservabilityMiddleware, metrics_response
+from app.rate_limit import limiter
 from app.routes import analytics, auth, cvs, demo, documents, jobs, matches, platform, projects, skills, tasks
 
 app = FastAPI(
@@ -37,6 +44,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Per-IP rate limiting (protects Gemini/embedding-backed endpoints).
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Rate limit exceeded: {exc.detail}. Please slow down."},
+    )
+
+
+app.add_middleware(SlowAPIMiddleware)
+# Request metrics + structured access logging.
+app.add_middleware(ObservabilityMiddleware)
+
 # Register routes
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
@@ -59,6 +82,44 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/metrics")
+async def metrics():
+    return metrics_response()
+
+
+@app.get("/api/ready")
+async def readiness():
+    """Deep readiness: verify each backing service is actually reachable.
+    Returns 503 if the core store (Mongo) is down."""
+    from app.database import database
+    from app.services import object_storage, vector_store
+
+    deps: dict[str, str] = {}
+
+    async def check(name: str, coro) -> None:
+        try:
+            await asyncio.wait_for(coro, timeout=2.5)
+            deps[name] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            deps[name] = f"down: {type(exc).__name__}"
+
+    async def redis_ping() -> None:
+        from app.queue import get_arq_pool
+
+        pool = await get_arq_pool()
+        if pool is None:
+            raise RuntimeError("redis unavailable")
+        await pool.ping()
+
+    await check("mongo", database.client.admin.command("ping"))
+    await check("redis", redis_ping())
+    await check("qdrant", vector_store.ping())
+    await check("minio", object_storage.ping())
+
+    ready = deps.get("mongo") == "ok"
+    return JSONResponse({"ready": ready, "dependencies": deps}, status_code=200 if ready else 503)
 
 
 @app.on_event("startup")

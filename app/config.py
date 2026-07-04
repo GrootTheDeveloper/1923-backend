@@ -84,3 +84,9 @@ GEMINI_EMBED_URL = os.getenv(
 QDRANT_URL = os.getenv("QDRANT_URL", "")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "cv_embeddings")
 VECTOR_SEARCH_ENABLED = bool(QDRANT_URL)
+
+# --- Rate limiting (per client IP) ---
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+RATE_LIMIT_DEFAULT = os.getenv("RATE_LIMIT_DEFAULT", "120/minute")
+RATE_LIMIT_LLM = os.getenv("RATE_LIMIT_LLM", "20/minute")  # endpoints that call Gemini (cost)
+RATE_LIMIT_MATCH = os.getenv("RATE_LIMIT_MATCH", "30/minute")  # embedding + heavy compute

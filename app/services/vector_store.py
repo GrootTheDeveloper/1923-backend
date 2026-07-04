@@ -112,3 +112,10 @@ async def delete_cv_vector(cv_id: str) -> None:
         await run_in_threadpool(_delete_sync, cv_id)
     except Exception as exc:  # noqa: BLE001
         print(f"[vector_store] delete failed ({exc}).")
+
+
+async def ping() -> None:
+    """Raise if vector search is enabled but Qdrant is unreachable."""
+    if not VECTOR_SEARCH_ENABLED:
+        return
+    await run_in_threadpool(lambda: _get_client().get_collections())

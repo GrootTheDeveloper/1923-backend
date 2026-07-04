@@ -4,10 +4,11 @@ import hashlib
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pymongo import ReturnDocument
 
-from app.config import MAX_PDF_PAGES
+from app.config import MAX_PDF_PAGES, RATE_LIMIT_LLM
+from app.rate_limit import limiter
 from app.database import candidates_collection, cv_documents_collection, match_results_collection
 from app.models.cvmatch import CVExtractedDataUpdate
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404, validate_pdf_upload
@@ -70,7 +71,8 @@ def serialize_cv(document: dict, candidate: dict | None = None, include_full_tex
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 @router.post("/import", status_code=status.HTTP_201_CREATED)
-async def upload_cv(file: UploadFile = File(...), current_user: dict = Depends(get_optional_user)):
+@limiter.limit(RATE_LIMIT_LLM)
+async def upload_cv(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_optional_user)):
     file_bytes = await file.read()
     validate_pdf_upload(file, file_bytes)
 
@@ -223,7 +225,8 @@ async def get_parsed_cv(cv_id: str, current_user: dict = Depends(get_optional_us
 
 
 @router.post("/{cv_id}/reparse")
-async def reparse_cv(cv_id: str, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(RATE_LIMIT_LLM)
+async def reparse_cv(request: Request, cv_id: str, current_user: dict = Depends(get_optional_user)):
     """Re-run extraction from the stored raw PDF (e.g. after a parser upgrade),
     without asking the user to re-upload."""
     object_id = object_id_or_404(cv_id, "CV")

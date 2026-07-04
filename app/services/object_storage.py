@@ -100,3 +100,10 @@ async def remove_cv_pdf(object_key: str | None) -> None:
         await run_in_threadpool(_remove_sync, object_key)
     except Exception as exc:  # noqa: BLE001
         print(f"[object_storage] remove failed ({exc}).")
+
+
+async def ping() -> None:
+    """Raise if object storage is enabled but MinIO is unreachable."""
+    if not OBJECT_STORAGE_ENABLED:
+        return
+    await run_in_threadpool(lambda: _get_client().bucket_exists(S3_BUCKET))

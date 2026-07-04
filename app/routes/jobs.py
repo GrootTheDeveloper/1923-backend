@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pymongo import ReturnDocument
 
+from app.config import RATE_LIMIT_LLM
 from app.database import jobs_collection, match_results_collection
 from app.models.cvmatch import JobCreate, JobUpdate
+from app.rate_limit import limiter
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404
 from app.services.gemini_extraction import extract_jd_data_hybrid
 from app.services.requirement_service import normalize_requirement_config, split_skills_by_priority
@@ -38,7 +40,8 @@ def serialize_job(document: dict) -> dict:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_job(job: JobCreate, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(RATE_LIMIT_LLM)
+async def create_job(request: Request, job: JobCreate, current_user: dict = Depends(get_optional_user)):
     if not job.raw_text.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JD text is required.")
 

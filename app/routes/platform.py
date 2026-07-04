@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
+from app.config import RATE_LIMIT_MATCH
 from app.database import (
     audit_logs_collection, jobs_collection, match_feedback_collection,
     match_jobs_collection, match_results_collection,
 )
 from app.models.cvmatch import AsyncMatchRequest, MatchFeedbackCreate
+from app.rate_limit import limiter
 from app.queue import enqueue_match_job
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404
 from app.routes.matches import serialize_match
@@ -38,8 +40,9 @@ def serialize_match_job(document: dict) -> dict:
 
 
 @router.post("/jobs/{job_id}/match", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit(RATE_LIMIT_MATCH)
 async def create_match_job(
-    job_id: str, request: AsyncMatchRequest, background_tasks: BackgroundTasks,
+    request: Request, job_id: str, match_request: AsyncMatchRequest, background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_optional_user),
 ):
     job_object_id = object_id_or_404(job_id, "Job")
@@ -47,11 +50,11 @@ async def create_match_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     # Validate CV ids up front; the worker reloads by id so we pass strings.
-    cv_ids = [str(object_id_or_404(value, "CV")) for value in request.cv_ids] if request.cv_ids else None
+    cv_ids = [str(object_id_or_404(value, "CV")) for value in match_request.cv_ids] if match_request.cv_ids else None
     now = datetime.now(timezone.utc)
     document = {
         "job_id": job_object_id, "owner_id": current_user["id"], "status": "queued",
-        "stage": "queued", "progress": 0, "top_k": request.top_k,
+        "stage": "queued", "progress": 0, "top_k": match_request.top_k,
         "candidate_count": 0, "result_count": 0, "attempts": 0, "error": "", "created_at": now,
     }
     inserted = await match_jobs_collection.insert_one(document)
@@ -59,13 +62,13 @@ async def create_match_job(
 
     # Prefer the durable queue; fall back to in-process execution if Redis is down
     # so the manual dev workflow keeps working.
-    queued = await enqueue_match_job(match_job_id, current_user["id"], cv_ids, request.top_k)
+    queued = await enqueue_match_job(match_job_id, current_user["id"], cv_ids, match_request.top_k)
     document["dispatch"] = "queue" if queued else "inline"
     await match_jobs_collection.update_one(
         {"_id": inserted.inserted_id}, {"$set": {"dispatch": document["dispatch"]}}
     )
     if not queued:
-        background_tasks.add_task(run_match_job_inline, match_job_id, current_user["id"], cv_ids, request.top_k)
+        background_tasks.add_task(run_match_job_inline, match_job_id, current_user["id"], cv_ids, match_request.top_k)
 
     document["_id"] = inserted.inserted_id
     return serialize_match_job(document)

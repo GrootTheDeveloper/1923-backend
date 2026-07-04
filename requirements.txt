@@ -12,3 +12,5 @@ PyMuPDF
 arq
 minio
 qdrant-client
+slowapi
+prometheus-client
