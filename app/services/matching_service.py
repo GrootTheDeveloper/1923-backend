@@ -7,6 +7,7 @@ from typing import List
 
 from app.services.ranking_model import predict_ml_rank
 from app.services.requirement_service import normalize_requirement_config
+from app.services.scoring_config import normalize_weights, resolve_scoring_config, rule_weight_profile
 from app.services.skill_service import normalize_skills
 
 
@@ -18,7 +19,14 @@ STATUS_RECOMMENDATIONS = [
 ]
 
 
-def calculate_match(cv_document: dict, job: dict, semantic_override: int | None = None, ranking_model: dict | None = None) -> dict:
+def calculate_match(
+    cv_document: dict,
+    job: dict,
+    semantic_override: int | None = None,
+    ranking_model: dict | None = None,
+    scoring_config: dict | None = None,
+) -> dict:
+    config = resolve_scoring_config(scoring_config)
     cv_data = cv_document.get("extracted_data") or {}
     job_data = job.get("extracted_requirements") or {}
     raw_cv = cv_document.get("raw_text", "")
@@ -31,7 +39,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
         job.get("requirements_config") or job_data.get("requirements_config"), required_skills, preferred_skills
     )
 
-    requirement_result = score_requirements(requirements_config, cv_data, raw_cv)
+    requirement_result = score_requirements(requirements_config, cv_data, raw_cv, config)
     matched_required = [item["name"] for item in requirement_result["items"] if item["matched"] and item["priority"] == "required" and item["type"] == "skill"]
     matched_preferred = [item["name"] for item in requirement_result["items"] if item["matched"] and item["priority"] != "required" and item["type"] == "skill"]
     missing_required = [item["name"] for item in requirement_result["items"] if not item["matched"] and item["priority"] == "required" and item["type"] == "skill"]
@@ -50,25 +58,34 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     penalty_score = requirement_result["penalty_score"]
 
     job_level = (job.get("level") or job_data.get("job_level") or "Junior").strip().capitalize()
-    if job_level == "Intern":
-        w_req, w_exp, w_edu, w_comp = 0.45, 0.15, 0.35, 0.05
-    elif job_level in ("Middle", "Senior", "Lead", "Manager"):
-        w_req, w_exp, w_edu, w_comp = 0.45, 0.45, 0.05, 0.05
-    else:
-        w_req, w_exp, w_edu, w_comp = 0.60, 0.20, 0.15, 0.05
-
-    rule_based_score = round(
-        (requirement_result["requirement_score"] * w_req)
-        + (experience_project_score * w_exp)
-        + (education_lang_cert_score * w_edu)
-        + (completeness_score * w_comp)
-    )
+    configured_rule_weights = rule_weight_profile(config, job_level)
+    applicable_rule_keys = {
+        "experience_project", "education_language_certification", "completeness"
+    }
+    if requirement_result["applicable"]:
+        applicable_rule_keys.add("requirements")
+    effective_rule_weights = applicable_weights(configured_rule_weights, applicable_rule_keys)
+    rule_based_score = round(weighted_score(
+        {
+            "requirements": requirement_result["requirement_score"],
+            "experience_project": experience_project_score,
+            "education_language_certification": education_lang_cert_score,
+            "completeness": completeness_score,
+        },
+        effective_rule_weights,
+    ))
     rule_score = max(0, min(100, rule_based_score - penalty_score))
     evidence_coverage = ratio_score(
         sum(1 for item in requirement_result["items"] if item.get("evidence")),
         len(requirement_result["items"]),
     ) if requirement_result["items"] else completeness_score
-    confidence_score = round((completeness_score * 0.55) + (evidence_coverage * 0.45))
+    confidence_score = round(weighted_score(
+        {
+            "completeness": completeness_score,
+            "evidence_coverage": evidence_coverage,
+        },
+        config["confidence_weights"],
+    ))
     ml_features = {
         "rule_score": rule_score,
         "semantic_score": semantic_score,
@@ -89,14 +106,17 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     # de-scoring a candidate for a gap year or their school would itself be biased.
     fairness = assess_fairness_risk(cv_data)
     fairness_risk_score = fairness["score"]
-    final_score = round(
-        (0.30 * rule_score) + (0.25 * semantic_score) + (0.30 * ml_rank_score)
-        + (0.10 * confidence_score)
-    )
+    final_weights = config["final_blend_weights"]
+    final_score = round(weighted_score({
+        "rule_score": rule_score,
+        "semantic_similarity": semantic_score,
+        "ml_rank": ml_rank_score,
+        "confidence": confidence_score,
+    }, final_weights))
     
     is_knockout_failed = len(requirement_result["knockout_misses"]) > 0
     if is_knockout_failed:
-        final_score = min(30, final_score)
+        final_score = min(config["knockout"]["final_score_cap"], final_score)
         
     final_score = max(0, min(100, final_score))
 
@@ -116,7 +136,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     match_explanation = build_match_explanation(
         final_score=final_score,
         recruiter_priority_score=recruiter_priority_score,
-        match_level="Weak" if is_knockout_failed else classify_score(final_score),
+        match_level="Weak" if is_knockout_failed else classify_score(final_score, config["thresholds"]),
         semantic_score=semantic_score,
         experience_project_score=experience_project_score,
         completeness_score=completeness_score,
@@ -129,6 +149,7 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     )
 
     return {
+        "scoring_config_version": config["version"],
         "final_score": final_score,
         "final_recommendation_score": final_score,
         "rule_score": rule_score,
@@ -140,9 +161,11 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
         "fairness_flags": fairness["flags"],
         "recruiter_priority_score": recruiter_priority_score,
         "recruiter_priority": classify_recruiter_priority(recruiter_priority_score, is_knockout_failed),
-        "match_level": "Weak" if is_knockout_failed else classify_score(final_score),
+        "match_level": "Weak" if is_knockout_failed else classify_score(final_score, config["thresholds"]),
         "is_knockout_failed": is_knockout_failed,
         "score_breakdown": {
+            "scoring_config_version": config["version"],
+            "requirements_applicable": requirement_result["applicable"],
             "requirement_score": requirement_result["requirement_score"],
             "skill_score": skill_score,
             "experience_project_score": experience_project_score,
@@ -157,15 +180,8 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
             "fairness_risk_score": fairness_risk_score,
             "final_recommendation_score": final_score,
             "weight_profile": {
-                "requirements": w_req,
-                "experience_project": w_exp,
-                "education_language_certification": w_edu,
-                "completeness": w_comp,
-                "rule_score": 0.30,
-                "semantic_similarity": 0.25,
-                "ml_rank": 0.30,
-                "confidence": 0.10,
-                "fairness_penalty": 0.05,
+                **effective_rule_weights,
+                **final_weights,
             }
         },
         "requirements_config": requirements_config,
@@ -192,9 +208,12 @@ def calculate_match(cv_document: dict, job: dict, semantic_override: int | None 
     }
 
 
-def score_requirements(requirements: List[dict], cv_data: dict, raw_cv: str) -> dict:
+def score_requirements(
+    requirements: List[dict], cv_data: dict, raw_cv: str, scoring_config: dict | None = None
+) -> dict:
+    config = resolve_scoring_config(scoring_config)
     if not requirements:
-        return {"requirement_score": 100, "skill_score": 100, "penalty_score": 0, "knockout_misses": [], "items": []}
+        return {"requirement_score": 0, "skill_score": 0, "applicable": False, "penalty_score": 0, "knockout_misses": [], "items": []}
 
     total_weight = 0
     earned_weight = 0
@@ -225,11 +244,15 @@ def score_requirements(requirements: List[dict], cv_data: dict, raw_cv: str) -> 
         )
 
     requirement_score = ratio_score(earned_weight, total_weight)
-    skill_score = ratio_score(skill_earned, skill_total)
-    penalty_score = min(35, len(knockout_misses) * 12)
+    skill_score = ratio_score(skill_earned, skill_total) if skill_total else 0
+    knockout_config = config["knockout"]
+    penalty_score = min(
+        knockout_config["penalty_cap"], len(knockout_misses) * knockout_config["penalty_per_miss"]
+    )
     return {
         "requirement_score": requirement_score,
         "skill_score": skill_score,
+        "applicable": True,
         "penalty_score": penalty_score,
         "knockout_misses": knockout_misses,
         "items": items,
@@ -647,14 +670,25 @@ def assess_fairness_risk(cv_data: dict) -> dict:
     return {"score": min(100, score), "flags": flags}
 
 
-def classify_score(score: int) -> str:
-    if score >= 80:
+def classify_score(score: int, thresholds: dict | None = None) -> str:
+    thresholds = thresholds or {"strong": 80, "good": 65, "partial": 50}
+    if score >= thresholds["strong"]:
         return "Strong"
-    if score >= 65:
+    if score >= thresholds["good"]:
         return "Good"
-    if score >= 50:
+    if score >= thresholds["partial"]:
         return "Partial"
     return "Weak"
+
+
+def applicable_weights(weights: dict[str, float], applicable_keys: set[str]) -> dict[str, float]:
+    active = {key: value for key, value in weights.items() if key in applicable_keys}
+    normalized = normalize_weights(active)
+    return {key: normalized.get(key, 0.0) for key in weights}
+
+
+def weighted_score(scores: dict[str, int | float], weights: dict[str, float]) -> float:
+    return sum(float(scores.get(key, 0)) * weight for key, weight in weights.items())
 
 
 def ratio_score(hit_count: int, total_count: int) -> int:

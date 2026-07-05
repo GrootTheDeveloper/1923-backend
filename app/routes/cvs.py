@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.config import MAX_PDF_PAGES, RATE_LIMIT_LLM
 from app.rate_limit import limiter
@@ -125,8 +126,23 @@ async def upload_cv(request: Request, file: UploadFile = File(...), current_user
         "created_at": now,
         "updated_at": now,
     }
-    result = await cv_documents_collection.insert_one(cv_document)
-    cv_document["_id"] = result.inserted_id
+    try:
+        result = await cv_documents_collection.insert_one(cv_document)
+        cv_document["_id"] = result.inserted_id
+    except DuplicateKeyError:
+        # Another concurrent upload won the owner/hash race. Return the
+        # canonical document instead of turning idempotency into a 500 error.
+        existing = await cv_documents_collection.find_one(
+            {"owner_id": current_user["id"], "file_hash": file_hash}
+        )
+        if existing is None:
+            raise
+        existing_candidate = (
+            await candidates_collection.find_one({"_id": existing["candidate_id"]})
+            if existing.get("candidate_id")
+            else None
+        )
+        return serialize_cv(existing, existing_candidate)
     # Index the masked profile for semantic retrieval (best-effort; PII-safe).
     await index_cv(str(cv_document["_id"]), current_user["id"], masked_data)
     # Vault: store sensitive attributes from the UNMASKED profile for offline

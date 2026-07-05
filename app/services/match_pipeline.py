@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
+from pymongo import InsertOne, ReplaceOne
 
 from app.database import cv_documents_collection, match_results_collection
 from app.services.cv_indexing import job_embedding_text
@@ -68,13 +69,21 @@ async def retrieve_candidates(job: dict, owner_id: str, cv_ids: list[ObjectId] |
 
 
 async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict]:
+    if not cvs:
+        return []
+
     job_version = int(job.get("requirements_version", 1))
     ranking_model = await load_active_ranking_model(owner_id)
+    cv_ids = [cv_document["_id"] for cv_document in cvs]
+    existing_matches = await match_results_collection.find(
+        {"job_id": job["_id"], "cv_id": {"$in": cv_ids}, "owner_id": owner_id}
+    ).to_list(length=len(cv_ids))
+    existing_by_cv_id = {document["cv_id"]: document for document in existing_matches}
+    now = datetime.now(timezone.utc)
+    operations = []
     results = []
     for cv_document in cvs:
-        existing = await match_results_collection.find_one(
-            {"job_id": job["_id"], "cv_id": cv_document["_id"], "owner_id": owner_id}
-        )
+        existing = existing_by_cv_id.get(cv_document["_id"])
         masked_profile = cv_document.get("masked_data")
         if not masked_profile:
             masked_profile, _ = mask_profile(cv_document.get("extracted_data") or {})
@@ -83,7 +92,6 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
             {**cv_document, "extracted_data": masked_profile}, job,
             semantic_override=vector_score, ranking_model=ranking_model,
         )
-        now = datetime.now(timezone.utc)
         original_profile = cv_document.get("extracted_data") or {}
         document = {
             **match_payload,
@@ -113,10 +121,12 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
             "updated_at": now,
         }
         if existing:
-            await match_results_collection.replace_one({"_id": existing["_id"]}, {**document, "_id": existing["_id"]})
             document["_id"] = existing["_id"]
+            operations.append(ReplaceOne({"_id": existing["_id"]}, document))
         else:
-            inserted = await match_results_collection.insert_one(document)
-            document["_id"] = inserted.inserted_id
+            document["_id"] = ObjectId()
+            operations.append(InsertOne(document))
         results.append(document)
+    if operations:
+        await match_results_collection.bulk_write(operations, ordered=False)
     return results

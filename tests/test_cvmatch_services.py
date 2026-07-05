@@ -37,6 +37,7 @@ class CVMatchServiceTests(unittest.TestCase):
                 "_id": ObjectId(),
                 "job_id": ObjectId(),
                 "cv_id": ObjectId(),
+                "scoring_config_version": "2026-07-s2-v1",
                 "matched_requirements_version": 2,
                 "job_requirements_version": 3,
                 "cv_snapshot": {"candidate_name": "Alex Nguyen"},
@@ -48,6 +49,7 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertEqual(match["job_requirements_version"], 3)
         self.assertTrue(match["is_outdated"])
         self.assertEqual(match["recruiter_priority_score"], 0)
+        self.assertEqual(match["scoring_config_version"], "2026-07-s2-v1")
         self.assertEqual(match["match_explanation"], {})
 
     def test_rule_based_cv_and_jd_extraction(self):
@@ -128,7 +130,7 @@ class CVMatchServiceTests(unittest.TestCase):
         result = calculate_match(cv_document, job)
 
         self.assertIn("JavaScript", result["missing_required_skills"])
-        self.assertGreater(result["score_breakdown"]["penalty_score"], 0)
+        self.assertEqual(result["score_breakdown"]["penalty_score"], 0)
         self.assertLess(result["final_score"], 90)
         self.assertLessEqual(result["recruiter_priority_score"], result["final_score"])
         self.assertTrue(result["match_explanation"]["summary"])
@@ -183,8 +185,12 @@ class FairnessTests(unittest.TestCase):
         result = calculate_match(cv, job)
         b = result["score_breakdown"]
         self.assertGreater(b["fairness_risk_score"], 0)  # gap-year flag fired
+        weights = b["weight_profile"]
         reconstructed = round(
-            0.30 * b["rule_score"] + 0.25 * b["semantic_score"] + 0.30 * b["ml_rank_score"] + 0.10 * b["confidence_score"]
+            weights["rule_score"] * b["rule_score"]
+            + weights["semantic_similarity"] * b["semantic_score"]
+            + weights["ml_rank"] * b["ml_rank_score"]
+            + weights["confidence"] * b["confidence_score"]
         )
         if not result["is_knockout_failed"]:
             self.assertEqual(result["final_score"], max(0, min(100, reconstructed)))
@@ -258,6 +264,24 @@ class AuthEnforcementTests(unittest.TestCase):
         finally:
             common.ENABLE_DEMO_MODE = original
 
+    def test_invalid_token_is_rejected_even_when_demo_on(self):
+        import asyncio
+
+        from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        import app.routes.cvmatch_common as common
+
+        original = common.ENABLE_DEMO_MODE
+        common.ENABLE_DEMO_MODE = True
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="not-a-valid-jwt")
+        try:
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(common.get_optional_user(credentials))
+            self.assertEqual(ctx.exception.status_code, 401)
+        finally:
+            common.ENABLE_DEMO_MODE = original
+
 
 class RuntimeConfigTests(unittest.TestCase):
     def _reload_config(self, env: dict[str, str]):
@@ -309,6 +333,25 @@ class RuntimeConfigTests(unittest.TestCase):
         try:
             problems = config.validate_runtime_config()
             self.assertTrue(any("too short" in p for p in problems))
+        finally:
+            importlib.reload(config)
+
+    def test_frontend_origins_are_read_only_from_environment(self):
+        config = self._reload_config(
+            {
+                "FRONTEND_URLS": "http://localhost:5173/, https://recruit.example.com",
+                "CORS_ALLOW_ORIGIN_REGEX": "^https://preview-[a-z]+\\.example\\.com$",
+            }
+        )
+        try:
+            self.assertEqual(
+                config.FRONTEND_URLS,
+                ["http://localhost:5173", "https://recruit.example.com"],
+            )
+            self.assertEqual(
+                config.CORS_ALLOW_ORIGIN_REGEX,
+                "^https://preview-[a-z]+\\.example\\.com$",
+            )
         finally:
             importlib.reload(config)
 

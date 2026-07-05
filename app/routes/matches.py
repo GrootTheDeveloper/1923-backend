@@ -25,6 +25,7 @@ def serialize_match(document: dict) -> dict:
         "job_id": str(document["job_id"]),
         "cv_id": str(document["cv_id"]),
         "candidate_name": cv_snapshot.get("candidate_name", "Unnamed Candidate"),
+        "scoring_config_version": document.get("scoring_config_version", document.get("score_breakdown", {}).get("scoring_config_version", "")),
         "candidate_email": cv_snapshot.get("email", ""),
         "filename": cv_snapshot.get("filename", ""),
         "job_title": job_snapshot.get("title", "Untitled Job"),

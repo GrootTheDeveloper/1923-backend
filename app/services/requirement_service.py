@@ -17,7 +17,7 @@ def build_requirement_config(required_skills: Iterable[str], preferred_skills: I
                 "type": "skill",
                 "priority": "required",
                 "weight": 12,
-                "is_knockout": True,
+                "is_knockout": False,
             }
         )
     for skill in normalize_skills(preferred_skills):
@@ -58,14 +58,11 @@ def normalize_requirement_config(requirements: Iterable[dict] | None, required_s
 
         weight = safe_int(item.get("weight"), default_weight(priority))
         weight = max(1, min(weight, 20))
-        
-        if "is_knockout" in item:
-            is_knockout = bool(item["is_knockout"])
-        else:
-            is_knockout = (priority == "required" and weight >= 12)
-            
-        if is_knockout and (priority != "required" or weight < 12):
-            is_knockout = False
+
+        # Knockout is an explicit business decision. Never infer or silently
+        # discard it based on priority/weight, because both paths caused the
+        # same JD to behave differently depending on extraction source.
+        is_knockout = bool(item.get("is_knockout", False))
 
         key = (name.casefold(), requirement_type)
         if key in seen:

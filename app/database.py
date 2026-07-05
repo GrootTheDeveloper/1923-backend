@@ -6,8 +6,6 @@ database = client[DATABASE_NAME]
 
 # Collections
 users_collection = database["users"]
-projects_collection = database["projects"]
-tasks_collection = database["tasks"]
 documents_collection = database["documents"]
 candidates_collection = database["candidates"]
 cv_documents_collection = database["cv_documents"]
@@ -23,6 +21,28 @@ fairness_attributes_collection = database["fairness_attributes"]
 # Trained learning-to-rank models (lightweight registry).
 ranking_models_collection = database["ranking_models"]
 
+async def duplicate_cv_file_hash_groups(limit: int = 20) -> list[dict]:
+    """Return duplicate owner/hash groups without mutating production data."""
+    pipeline = [
+        {
+            "$match": {
+                "owner_id": {"$type": "string"},
+                "file_hash": {"$type": "string", "$ne": ""},
+            }
+        },
+        {
+            "$group": {
+                "_id": {"owner_id": "$owner_id", "file_hash": "$file_hash"},
+                "document_ids": {"$push": "$_id"},
+                "count": {"$sum": 1},
+            }
+        },
+        {"$match": {"count": {"$gt": 1}}},
+        {"$limit": limit},
+    ]
+    return await cv_documents_collection.aggregate(pipeline).to_list(length=limit)
+
+
 async def create_indexes() -> None:
     try:
         import pymongo
@@ -32,8 +52,28 @@ async def create_indexes() -> None:
         await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING)])
         await cv_documents_collection.create_index([("status", pymongo.ASCENDING)])
         await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING), ("extracted_data.skills", pymongo.ASCENDING)])
-        # Idempotent import lookup by content hash.
-        await cv_documents_collection.create_index([("owner_id", pymongo.ASCENDING), ("file_hash", pymongo.ASCENDING)])
+        # Idempotent import lookup by content hash. A partial index permits old
+        # records without a hash while enforcing uniqueness for real uploads.
+        duplicate_groups = await duplicate_cv_file_hash_groups(limit=1)
+        if duplicate_groups:
+            print(
+                "[WARN] Duplicate (owner_id, file_hash) CV records block the unique index. "
+                "Run scripts/migrate_cv_file_hash_index.py in dry-run mode first."
+            )
+        else:
+            expected_keys = [("owner_id", pymongo.ASCENDING), ("file_hash", pymongo.ASCENDING)]
+            async for index in cv_documents_collection.list_indexes():
+                if list(index.get("key", {}).items()) == expected_keys and not index.get("unique"):
+                    await cv_documents_collection.drop_index(index["name"])
+            await cv_documents_collection.create_index(
+                expected_keys,
+                name="uq_cv_owner_file_hash",
+                unique=True,
+                partialFilterExpression={
+                    "owner_id": {"$type": "string"},
+                    "file_hash": {"$type": "string"},
+                },
+            )
         # jobs: owner_id
         await jobs_collection.create_index([("owner_id", pymongo.ASCENDING)])
         # match_results: job_id, cv_id, owner_id

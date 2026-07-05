@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from bson import ObjectId
 from fastapi import Depends, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -9,6 +11,7 @@ from app.config import ENABLE_DEMO_MODE, JWT_ALGORITHM, JWT_SECRET_KEY, MAX_UPLO
 from app.database import users_collection
 
 optional_security = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 def demo_user() -> dict:
@@ -31,18 +34,15 @@ async def get_optional_user(
         payload = jwt.decode(credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if not user_id or not ObjectId.is_valid(user_id):
-            if ENABLE_DEMO_MODE:
-                return demo_user()
+            logger.warning("Rejected bearer token with an invalid subject.")
             raise auth_required_error()
     except JWTError as exc:
-        if ENABLE_DEMO_MODE:
-            return demo_user()
+        logger.warning("Rejected invalid or expired bearer token.")
         raise auth_required_error() from exc
 
     user = await users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
-        if ENABLE_DEMO_MODE:
-            return demo_user()
+        logger.warning("Rejected bearer token for a user that no longer exists.")
         raise auth_required_error()
 
     return {

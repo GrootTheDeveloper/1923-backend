@@ -15,7 +15,7 @@ from app.config import (
 )
 from app.observability import ObservabilityMiddleware, metrics_response
 from app.rate_limit import limiter
-from app.routes import analytics, auth, cvs, demo, documents, jobs, matches, platform, projects, skills, tasks
+from app.routes import analytics, auth, cvs, demo, documents, jobs, matches, platform, skills
 
 app = FastAPI(
     title="Lattice Recruitment Matching API",
@@ -23,17 +23,8 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# CORS origins for local dev, local production preview, and deployed frontend.
-default_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "https://1923-frontend-eya6exfrhebxftgc.southeastasia-01.azurewebsites.net",
-]
-origins = sorted(set(default_origins + FRONTEND_URLS))
+# Exact origins and any optional preview-origin regex come from the environment.
+origins = sorted(set(FRONTEND_URLS))
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,8 +73,6 @@ app.include_router(platform.router, prefix="/api", tags=["Recruitment Platform"]
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
-app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
-app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 
 
 @app.get("/")

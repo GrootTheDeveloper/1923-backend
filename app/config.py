@@ -59,16 +59,19 @@ def validate_runtime_config() -> list[str]:
     return problems
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "25"))
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-FRONTEND_URLS = [
-    url.strip()
-    for url in os.getenv("FRONTEND_URLS", FRONTEND_URL).split(",")
-    if url.strip()
-]
-CORS_ALLOW_ORIGIN_REGEX = os.getenv(
-    "CORS_ALLOW_ORIGIN_REGEX",
-    r"^https://1923-frontend(?:-[a-z0-9]+)?(?:\.[a-z0-9-]+)?\.azurewebsites\.net$|^https://[a-z0-9-]+\.azurestaticapps\.net$",
-)
+
+
+def comma_separated_env(name: str) -> list[str]:
+    return [
+        value.strip().rstrip("/")
+        for value in os.getenv(name, "").split(",")
+        if value.strip()
+    ]
+
+
+# CORS is deployment configuration: no frontend hostname is embedded in code.
+FRONTEND_URLS = comma_separated_env("FRONTEND_URLS")
+CORS_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ALLOW_ORIGIN_REGEX", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_URL = os.getenv(
