@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from pymongo import InsertOne, ReplaceOne
+from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 
 from app.database import cv_documents_collection, match_results_collection
 from app.services.cv_indexing import job_embedding_text
@@ -98,18 +99,24 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
             job_context=job_context,
         )
         original_profile = cv_document.get("extracted_data") or {}
-        document = {
+        # Race-safe upsert keyed on the natural (job, cv, owner) uniqueness. Recruiter
+        # state (_id / created_at / pipeline_status / note) is written only on insert,
+        # so a concurrent re-match can neither clobber it nor collide on the unique index.
+        doc_id = existing["_id"] if existing else ObjectId()
+        created_at = existing.get("created_at", now) if existing else now
+        pipeline_status = existing.get("pipeline_status", "New") if existing else "New"
+        note = existing.get("note", "") if existing else ""
+        natural_key = {"job_id": job["_id"], "cv_id": cv_document["_id"], "owner_id": owner_id}
+        set_fields = {
             **match_payload,
-            "job_id": job["_id"], "cv_id": cv_document["_id"], "owner_id": owner_id,
-            "pipeline_status": existing.get("pipeline_status", "New") if existing else "New",
-            "note": existing.get("note", "") if existing else "",
+            **natural_key,
             "matched_requirements_version": job_version,
             "job_requirements_version": job_version,
             "is_outdated": False, "outdated_reason": "",
             "retrieval": {
-                "strategy": "vector_keyword_hybrid" if cv_document.get("_vector_score") is not None else "keyword_only",
+                "strategy": "vector_keyword_hybrid" if vector_score is not None else "keyword_only",
                 "retrieved_from_index": True,
-                "semantic_source": "embedding" if cv_document.get("_vector_score") is not None else "lexical",
+                "semantic_source": "embedding" if vector_score is not None else "lexical",
                 "llm_used_for_ranking": False,
             },
             "cv_snapshot": {
@@ -122,16 +129,16 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
                 "company": job.get("company", ""),
                 "requirements_version": job_version,
             },
-            "created_at": existing.get("created_at", now) if existing else now,
             "updated_at": now,
         }
-        if existing:
-            document["_id"] = existing["_id"]
-            operations.append(ReplaceOne({"_id": existing["_id"]}, document))
-        else:
-            document["_id"] = ObjectId()
-            operations.append(InsertOne(document))
-        results.append(document)
+        insert_only = {"_id": doc_id, "created_at": created_at, "pipeline_status": pipeline_status, "note": note}
+        operations.append(UpdateOne(natural_key, {"$set": set_fields, "$setOnInsert": insert_only}, upsert=True))
+        results.append({**set_fields, **insert_only})
     if operations:
-        await match_results_collection.bulk_write(operations, ordered=False)
+        try:
+            await match_results_collection.bulk_write(operations, ordered=False)
+        except BulkWriteError as exc:  # tolerate benign duplicate-key from a concurrent match run
+            unexpected = [err for err in exc.details.get("writeErrors", []) if err.get("code") != 11000]
+            if unexpected:
+                raise
     return results

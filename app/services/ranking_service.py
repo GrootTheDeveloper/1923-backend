@@ -27,6 +27,9 @@ from app.services.ranking_model import (
 
 MIN_TRAIN_SAMPLES = 5
 HOLDOUT_FRACTION = 0.25
+# Do not trust (and therefore never activate on) a hold-out smaller than this;
+# a 1-sample test set makes NDCG@5 trivially perfect and the lift meaningless.
+MIN_HOLDOUT_SAMPLES = 2
 
 
 def _relevance(match: dict, verdict: Optional[str]) -> int:
@@ -291,9 +294,14 @@ async def train_ranking_model(owner_id: str) -> dict:
     candidate_model["train_samples"] = len(train_examples)
     candidate_model["test_samples"] = len(test_examples)
     holdout = evaluate_model_on_examples(test_examples, candidate_model)
-    gate_passed = (holdout["ndcg_lift"] is not None and holdout["ndcg_lift"] > 0) or (
+    holdout_trustworthy = (
+        len(test_examples) >= MIN_HOLDOUT_SAMPLES
+        and holdout["baseline"].get("jobs_evaluated", 0) >= 1
+    )
+    positive_lift = (holdout["ndcg_lift"] is not None and holdout["ndcg_lift"] > 0) or (
         holdout["map_lift"] is not None and holdout["map_lift"] > 0
     )
+    gate_passed = holdout_trustworthy and positive_lift
     candidate_model["active"] = gate_passed
     metrics = {
         "train_samples": len(train_examples),
@@ -301,7 +309,9 @@ async def train_ranking_model(owner_id: str) -> dict:
         "out_of_sample": holdout,
         "activation_gate": {
             "passed": gate_passed,
-            "rule": "activate only when hold-out NDCG or MAP lift is positive",
+            "holdout_trustworthy": holdout_trustworthy,
+            "min_holdout_samples": MIN_HOLDOUT_SAMPLES,
+            "rule": "activate only when the hold-out is large enough AND NDCG or MAP lift is positive",
         },
         "position_bias": _position_bias_summary(feedback, examples),
     }
@@ -329,6 +339,6 @@ async def train_ranking_model(owner_id: str) -> dict:
     response["note"] = (
         "Model is now active; new matches use it for ml_rank_score."
         if gate_passed
-        else "Candidate model was stored inactive because hold-out lift was not positive."
+        else "Candidate model was stored inactive (hold-out too small or no positive out-of-sample lift)."
     )
     return response

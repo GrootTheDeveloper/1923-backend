@@ -260,7 +260,14 @@ def calculate_match(
 def score_requirements(
     requirements: List[dict], cv_data: dict, raw_cv: str, scoring_config: dict | None = None
 ) -> dict:
-    config = resolve_scoring_config(scoring_config)
+    # calculate_match passes an already-resolved config; only resolve when the
+    # caller hands us a partial/None one, so the per-CV batch loop does not
+    # re-normalize the same document on every candidate.
+    config = (
+        scoring_config
+        if isinstance(scoring_config, dict) and "knockout" in scoring_config
+        else resolve_scoring_config(scoring_config)
+    )
     if not requirements:
         return {"requirement_score": 0, "skill_score": 0, "applicable": False, "penalty_score": 0, "knockout_misses": [], "items": []}
 
