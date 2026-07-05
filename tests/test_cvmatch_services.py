@@ -4,6 +4,9 @@ import unittest
 
 from bson import ObjectId
 
+from app.config import MATCH_RECALL_TOP_K
+from app.models.cvmatch import AsyncMatchRequest
+from app.routes.platform import serialize_match_job
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
 from app.services.extraction_service import extract_cv_data, extract_jd_data
@@ -51,6 +54,11 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertEqual(match["recruiter_priority_score"], 0)
         self.assertEqual(match["scoring_config_version"], "2026-07-s2-v1")
         self.assertEqual(match["match_explanation"], {})
+
+    def test_matching_recall_default_is_shared(self):
+        self.assertEqual(AsyncMatchRequest().top_k, MATCH_RECALL_TOP_K)
+        match_job = serialize_match_job({"_id": ObjectId(), "job_id": ObjectId()})
+        self.assertEqual(match_job["top_k"], MATCH_RECALL_TOP_K)
 
     def test_rule_based_cv_and_jd_extraction(self):
         cv_text = """

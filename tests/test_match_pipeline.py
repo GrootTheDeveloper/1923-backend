@@ -118,5 +118,62 @@ class MatchPipelineBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[1]["pipeline_status"], "New")
 
 
+class FakeCandidateCursor:
+    def __init__(self, documents):
+        self.documents = documents
+        self.limit_value = None
+        self.to_list_length = None
+
+    def limit(self, value):
+        self.limit_value = value
+        return self
+
+    async def to_list(self, length):
+        self.to_list_length = length
+        return self.documents[:length]
+
+
+class FakeCVDocumentsCollection:
+    def __init__(self, documents):
+        self.documents = documents
+        self.cursor = None
+        self.find_calls = []
+
+    def find(self, query):
+        self.find_calls.append(query)
+        self.cursor = FakeCandidateCursor(self.documents)
+        return self.cursor
+
+
+class MatchPipelineRecallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fallback_retrieval_respects_requested_top_k(self):
+        collection = FakeCVDocumentsCollection([
+            {"_id": ObjectId(), "owner_id": "owner-1", "status": "Ready"} for _ in range(5)
+        ])
+
+        async def empty_vector_retrieve(job, owner_id, top_k):
+            return []
+
+        async def empty_skill_retrieve(job, owner_id, top_k):
+            return []
+
+        original_collection = pipeline.cv_documents_collection
+        original_vector = pipeline._vector_retrieve
+        original_skill = pipeline._skill_retrieve
+        pipeline.cv_documents_collection = collection
+        pipeline._vector_retrieve = empty_vector_retrieve
+        pipeline._skill_retrieve = empty_skill_retrieve
+        try:
+            candidates = await pipeline.retrieve_candidates({"_id": ObjectId()}, "owner-1", None, top_k=3)
+        finally:
+            pipeline.cv_documents_collection = original_collection
+            pipeline._vector_retrieve = original_vector
+            pipeline._skill_retrieve = original_skill
+
+        self.assertEqual(len(candidates), 3)
+        self.assertEqual(collection.cursor.limit_value, 3)
+        self.assertEqual(collection.cursor.to_list_length, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

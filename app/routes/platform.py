@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 
-from app.config import RATE_LIMIT_MATCH
+from app.config import MATCH_RECALL_TOP_K, RATE_LIMIT_MATCH
 from app.database import (
     audit_logs_collection, jobs_collection, match_feedback_collection,
     match_jobs_collection, match_results_collection,
@@ -27,7 +27,7 @@ def serialize_match_job(document: dict) -> dict:
         "status": document.get("status", "queued"),
         "stage": document.get("stage", "retrieval"),
         "progress": document.get("progress", 0),
-        "top_k": document.get("top_k", 1000),
+        "top_k": document.get("top_k", MATCH_RECALL_TOP_K),
         "candidate_count": document.get("candidate_count", 0),
         "result_count": document.get("result_count", 0),
         "attempts": document.get("attempts", 0),

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pymongo import ReturnDocument
 
+from app.config import MATCH_RECALL_TOP_K
 from app.database import jobs_collection, match_results_collection
 from app.models.cvmatch import MatchRunRequest, MatchStatusUpdate
 from app.routes.cvmatch_common import get_optional_user, object_id_or_404
@@ -85,7 +86,7 @@ async def run_matching(request: MatchRunRequest, current_user: dict = Depends(ge
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
     cv_ids = [object_id_or_404(cv_id, "CV") for cv_id in request.cv_ids] if request.cv_ids else None
-    candidates = await retrieve_candidates(job, current_user["id"], cv_ids, top_k=200)
+    candidates = await retrieve_candidates(job, current_user["id"], cv_ids, top_k=MATCH_RECALL_TOP_K)
     if not candidates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No ready CVs found for matching.")
 

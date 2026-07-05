@@ -11,6 +11,8 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "project_management")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # Max attempts for a match job before it is marked permanently failed.
 MATCH_JOB_MAX_TRIES = int(os.getenv("MATCH_JOB_MAX_TRIES", "3"))
+# Default recall depth shared by sync matching and async matching jobs.
+MATCH_RECALL_TOP_K = max(1, min(int(os.getenv("MATCH_RECALL_TOP_K", "1000")), 5000))
 
 # Object storage (MinIO / S3) for raw CV PDFs. When unset, uploads still work but
 # the raw PDF is not persisted (re-parse from raw becomes unavailable).

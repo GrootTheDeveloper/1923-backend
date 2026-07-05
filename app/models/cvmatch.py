@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.config import MATCH_RECALL_TOP_K
+
 
 class JobCreate(BaseModel):
     title: Optional[str] = None
@@ -56,6 +58,6 @@ class MatchFeedbackCreate(BaseModel):
 
 class AsyncMatchRequest(BaseModel):
     cv_ids: Optional[List[str]] = None
-    top_k: int = Field(default=1000, ge=1, le=5000)
+    top_k: int = Field(default=MATCH_RECALL_TOP_K, ge=1, le=5000)
 
 

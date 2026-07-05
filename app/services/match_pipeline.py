@@ -61,7 +61,7 @@ async def retrieve_candidates(job: dict, owner_id: str, cv_ids: list[ObjectId] |
 
     documents = list(merged.values())
     if not documents:
-        fallback_k = min(top_k, 1000)
+        fallback_k = top_k
         documents = await cv_documents_collection.find(
             {"owner_id": owner_id, "status": "Ready"}
         ).limit(fallback_k).to_list(length=fallback_k)
