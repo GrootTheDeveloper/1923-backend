@@ -28,7 +28,8 @@ async def _vector_retrieve(job: dict, owner_id: str, top_k: int) -> list[dict]:
         {"_id": {"$in": list(scores)}, "owner_id": owner_id, "status": "Ready"}
     ).to_list(length=len(scores))
     for document in documents:
-        # Cosine similarity in [-1, 1] -> [0, 100].
+        # Raw embedding cosine percent. calculate_match calibrates this onto the
+        # same semantic scale as lexical similarity before final blending.
         document["_vector_score"] = round(max(0.0, min(1.0, scores.get(document["_id"], 0.0))) * 100)
     documents.sort(key=lambda doc: doc.get("_vector_score", 0), reverse=True)
     return documents
@@ -91,7 +92,10 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
         vector_score = cv_document.get("_vector_score")
         match_payload = calculate_match(
             {**cv_document, "extracted_data": masked_profile}, job,
-            semantic_override=vector_score, ranking_model=ranking_model, job_context=job_context,
+            semantic_override=vector_score,
+            semantic_source="embedding" if vector_score is not None else None,
+            ranking_model=ranking_model,
+            job_context=job_context,
         )
         original_profile = cv_document.get("extracted_data") or {}
         document = {

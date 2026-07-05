@@ -10,7 +10,7 @@ from app.routes.platform import serialize_match_job
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
 from app.services.extraction_service import extract_cv_data, extract_jd_data
-from app.services.matching_service import calculate_match, score_semantic_similarity
+from app.services.matching_service import calculate_match, calibrate_semantic_score, score_semantic_similarity
 from app.services.skill_service import normalize_skill, normalize_skills
 from app.routes.demo import DEMO_CVS, DEMO_JD_TEXT
 
@@ -89,6 +89,12 @@ class CVMatchServiceTests(unittest.TestCase):
         self.assertIn("React", cv_data["skills"])
         self.assertIn("JavaScript", jd_data["required_skills"])
         self.assertIn("Tailwind CSS", jd_data["preferred_skills"])
+
+    def test_semantic_calibration_maps_embedding_and_lexical_to_common_scale(self):
+        self.assertEqual(calibrate_semantic_score(70, "embedding"), 55)
+        self.assertEqual(calibrate_semantic_score(25, "lexical"), 55)
+        self.assertLess(calibrate_semantic_score(45, "embedding"), calibrate_semantic_score(45, "lexical"))
+        self.assertEqual(score_semantic_similarity({}, {}, "", ""), 45)
 
     def test_semantic_similarity_rewards_related_cv_and_jd_content(self):
         cv_data = {

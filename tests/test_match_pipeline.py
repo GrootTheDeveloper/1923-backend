@@ -56,13 +56,14 @@ class MatchPipelineBatchTests(unittest.IsolatedAsyncioTestCase):
 
         seen_contexts = []
 
-        def fake_calculate_match(cv_document, job, semantic_override=None, ranking_model=None, job_context=None):
+        def fake_calculate_match(cv_document, job, semantic_override=None, semantic_source=None, ranking_model=None, job_context=None):
             seen_contexts.append(job_context)
             return {
                 "final_score": 72,
                 "final_recommendation_score": 72,
                 "rule_score": 70,
                 "semantic_score": semantic_override or 50,
+                "semantic_source": semantic_source or "lexical",
                 "ml_rank_score": 75,
                 "confidence_score": 80,
                 "score_breakdown": {},

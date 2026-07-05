@@ -57,6 +57,7 @@ def calculate_match(
     cv_document: dict,
     job: dict,
     semantic_override: int | None = None,
+    semantic_source: str | None = None,
     ranking_model: dict | None = None,
     scoring_config: dict | None = None,
     job_context: MatchJobContext | None = None,
@@ -81,11 +82,16 @@ def calculate_match(
     education_lang_cert_score = score_supporting_requirements(cv_data, job_data, requirements_config)
     completeness_score = score_completeness(cv_data, raw_cv)
     # Prefer a real embedding similarity (from vector retrieval) when available;
-    # otherwise fall back to the lexical TF-cosine score.
+    # otherwise fall back to the lexical TF-cosine score. Both raw signals are
+    # calibrated onto the same 0-100 scale before participating in final blend.
     if semantic_override is not None:
-        semantic_score = max(0, min(100, round(semantic_override)))
+        semantic_source = semantic_source or "embedding"
+        semantic_raw_score = max(0, min(100, round(semantic_override)))
+        semantic_score = calibrate_semantic_score(semantic_raw_score, semantic_source)
     else:
-        semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job, job_context.semantic_job_terms)
+        semantic_source = semantic_source or "lexical"
+        semantic_raw_score = raw_semantic_similarity(cv_data, job_data, raw_cv, raw_job, job_context.semantic_job_terms)
+        semantic_score = calibrate_semantic_score(semantic_raw_score, semantic_source)
     penalty_score = requirement_result["penalty_score"]
 
     job_level = job_context.job_level
@@ -211,6 +217,9 @@ def calculate_match(
             "education_language_certification_score": education_lang_cert_score,
             "completeness_score": completeness_score,
             "semantic_score": semantic_score,
+            "semantic_raw_score": semantic_raw_score,
+            "semantic_source": semantic_source,
+            "semantic_calibration": semantic_calibration_profile(semantic_source),
             "penalty_score": penalty_score,
             "rule_score": rule_score,
             "ml_rank_score": ml_rank_score,
@@ -364,14 +373,54 @@ def requirement_matches(requirement: dict, cv_data: dict, raw_cv: str) -> tuple[
     return matched, find_best_overlap_line(raw_cv, name) if matched else ""
 
 
-def score_semantic_similarity(
+LEXICAL_NEUTRAL_RAW_SCORE = 20
+
+
+SEMANTIC_CALIBRATION_ANCHORS = {
+    # Lexical TF-cosine has a lower natural range: 0.10 can already be a weak
+    # topical overlap, while 0.45 is unusually strong for sparse CV/JD text.
+    "lexical": {"low": 10, "high": 45},
+    # Embedding cosine tends to cluster higher; raw 0.55 is still weak-ish and
+    # 0.90 is very strong. Mapping both sources through anchors makes the
+    # semantic term comparable before final blending.
+    "embedding": {"low": 55, "high": 90},
+}
+
+
+def semantic_calibration_profile(source: str | None) -> dict:
+    source_key = (source or "lexical").casefold()
+    anchors = SEMANTIC_CALIBRATION_ANCHORS.get(source_key, SEMANTIC_CALIBRATION_ANCHORS["lexical"])
+    return {"source": source_key, **anchors, "scale": "anchored_percentile_v1"}
+
+
+def calibrate_semantic_score(raw_score: int | float, source: str | None = "lexical") -> int:
+    profile = semantic_calibration_profile(source)
+    raw = max(0.0, min(100.0, float(raw_score)))
+    low = float(profile["low"])
+    high = float(profile["high"])
+    if raw <= low:
+        calibrated = 25.0 * (raw / low) if low > 0 else raw
+    elif raw >= high:
+        calibrated = 95.0 + (5.0 * (raw - high) / max(1.0, 100.0 - high))
+    else:
+        calibrated = 25.0 + (70.0 * (raw - low) / max(1.0, high - low))
+    return max(0, min(100, round(calibrated)))
+
+
+def raw_semantic_similarity(
     cv_data: dict, job_data: dict, raw_cv: str, raw_job: str, job_terms: Counter[str] | None = None
 ) -> int:
     cv_terms = term_frequencies(semantic_cv_text(cv_data, raw_cv))
     job_terms = job_terms if job_terms is not None else term_frequencies(semantic_job_text(job_data, raw_job))
     if not cv_terms or not job_terms:
-        return 45
+        return LEXICAL_NEUTRAL_RAW_SCORE
     return round(cosine_similarity(cv_terms, job_terms) * 100)
+
+
+def score_semantic_similarity(
+    cv_data: dict, job_data: dict, raw_cv: str, raw_job: str, job_terms: Counter[str] | None = None
+) -> int:
+    return calibrate_semantic_score(raw_semantic_similarity(cv_data, job_data, raw_cv, raw_job, job_terms), "lexical")
 
 
 def semantic_cv_text(cv_data: dict, raw_cv: str) -> str:

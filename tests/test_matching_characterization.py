@@ -92,13 +92,13 @@ SCENARIOS = {
 
 
 EXPECTED = {
-    "junior_full_match": {"final_score": 90, "rule_score": 94, "semantic_score": 88, "ml_rank_score": 100, "confidence_score": 82, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
-    "junior_missing_required": {"final_score": 36, "rule_score": 34, "semantic_score": 35, "ml_rank_score": 27, "confidence_score": 42, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": ["TypeScript"]},
-    "explicit_knockout_miss": {"final_score": 30, "rule_score": 32, "semantic_score": 60, "ml_rank_score": 6, "confidence_score": 50, "match_level": "Weak", "is_knockout_failed": True, "missing_required_skills": ["Kubernetes"]},
-    "empty_jd": {"final_score": 48, "rule_score": 45, "semantic_score": 45, "ml_rank_score": 50, "confidence_score": 67, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": []},
-    "intern_supporting_profile": {"final_score": 75, "rule_score": 73, "semantic_score": 75, "ml_rank_score": 82, "confidence_score": 82, "match_level": "Good", "is_knockout_failed": False, "missing_required_skills": []},
-    "senior_experience_gap": {"final_score": 54, "rule_score": 50, "semantic_score": 52, "ml_rank_score": 55, "confidence_score": 72, "match_level": "Partial", "is_knockout_failed": False, "missing_required_skills": []},
-    "learned_ranker": {"final_score": 63, "rule_score": 74, "semantic_score": 70, "ml_rank_score": 44, "confidence_score": 72, "match_level": "Partial", "is_knockout_failed": False, "missing_required_skills": []},
+    "junior_full_match": {"final_score": 91, "rule_score": 94, "semantic_score": 91, "ml_rank_score": 100, "confidence_score": 82, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
+    "junior_missing_required": {"final_score": 28, "rule_score": 34, "semantic_score": 16, "ml_rank_score": 27, "confidence_score": 42, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": ["TypeScript"]},
+    "explicit_knockout_miss": {"final_score": 30, "rule_score": 32, "semantic_score": 35, "ml_rank_score": 2, "confidence_score": 50, "match_level": "Weak", "is_knockout_failed": True, "missing_required_skills": ["Kubernetes"]},
+    "empty_jd": {"final_score": 39, "rule_score": 45, "semantic_score": 20, "ml_rank_score": 50, "confidence_score": 67, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": []},
+    "intern_supporting_profile": {"final_score": 71, "rule_score": 73, "semantic_score": 65, "ml_rank_score": 82, "confidence_score": 82, "match_level": "Good", "is_knockout_failed": False, "missing_required_skills": []},
+    "senior_experience_gap": {"final_score": 43, "rule_score": 50, "semantic_score": 24, "ml_rank_score": 55, "confidence_score": 72, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": []},
+    "learned_ranker": {"final_score": 59, "rule_score": 74, "semantic_score": 55, "ml_rank_score": 44, "confidence_score": 72, "match_level": "Partial", "is_knockout_failed": False, "missing_required_skills": []},
     "semantic_override_clamped": {"final_score": 82, "rule_score": 73, "semantic_score": 100, "ml_rank_score": 82, "confidence_score": 63, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
 }
 

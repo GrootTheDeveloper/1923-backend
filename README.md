@@ -37,6 +37,12 @@ LTR models use a versioned feature schema. Active models with an incompatible sc
 
 Training reserves a deterministic stratified hold-out set and activates a candidate model only when out-of-sample NDCG or MAP lift is positive. Feedback can include `displayed_rank`; this is stored for position-bias audits because labels collected from ranked lists may reflect exposure, not only candidate quality.
 
+## Vector and semantic scoring guardrails
+
+Qdrant CV vectors are isolated by embedding provider, model version, and dimension. By default the active collection name is suffixed with that index version, and each point payload stores the same metadata. Changing `EMBEDDING_DIM`, `EMBEDDING_PROVIDER`, or `EMBEDDING_MODEL_VERSION` therefore creates a fresh index path instead of mixing incompatible vectors; re-index CVs after such changes to populate the new collection.
+
+Semantic scores are calibrated before blending. Raw embedding cosine and lexical TF-cosine have different natural distributions, so `score_breakdown` stores both the raw semantic score/source and the calibrated `semantic_score` used by final scoring.
+
 ## CV hash migration
 
 Before enabling the unique `(owner_id, file_hash)` index on an existing database, inspect duplicates:

@@ -88,12 +88,17 @@ GEMINI_API_URL = os.getenv(
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "gemini").strip().lower()  # gemini | hashing
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+EMBEDDING_MODEL_VERSION = os.getenv(
+    "EMBEDDING_MODEL_VERSION",
+    GEMINI_EMBED_MODEL if EMBEDDING_PROVIDER == "gemini" else f"{EMBEDDING_PROVIDER}-v1",
+).strip()
 GEMINI_EMBED_URL = os.getenv(
     "GEMINI_EMBED_URL",
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent",
 )
 QDRANT_URL = os.getenv("QDRANT_URL", "")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "cv_embeddings")
+QDRANT_COLLECTION_VERSIONED = os.getenv("QDRANT_COLLECTION_VERSIONED", "true").strip().lower() in {"1", "true", "yes", "on"}
 VECTOR_SEARCH_ENABLED = bool(QDRANT_URL)
 
 # --- Rate limiting (per client IP) ---
