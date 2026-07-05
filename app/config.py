@@ -13,6 +13,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 MATCH_JOB_MAX_TRIES = int(os.getenv("MATCH_JOB_MAX_TRIES", "3"))
 # Default recall depth shared by sync matching and async matching jobs.
 MATCH_RECALL_TOP_K = max(1, min(int(os.getenv("MATCH_RECALL_TOP_K", "1000")), 5000))
+# Debounce owner-level learning-to-rank retraining after recruiter feedback/status changes.
+RANKER_RETRAIN_DEBOUNCE_SECONDS = max(0, int(os.getenv("RANKER_RETRAIN_DEBOUNCE_SECONDS", "30")))
 
 # Object storage (MinIO / S3) for raw CV PDFs. When unset, uploads still work but
 # the raw PDF is not persisted (re-parse from raw becomes unavailable).

@@ -11,6 +11,7 @@ from arq.connections import RedisSettings
 
 from app.config import MATCH_JOB_MAX_TRIES, REDIS_URL
 from app.services.match_runner import execute_match_job, mark_match_job_failed
+from app.services.ranking_service import maybe_retrain_ranker
 
 
 async def run_match_job(ctx, match_job_id: str, owner_id: str, cv_ids: list[str] | None, top_k: int) -> None:
@@ -23,7 +24,11 @@ async def run_match_job(ctx, match_job_id: str, owner_id: str, cv_ids: list[str]
         raise
 
 
+async def run_ranker_retrain(ctx, owner_id: str) -> None:
+    await maybe_retrain_ranker(owner_id)
+
+
 class WorkerSettings:
-    functions = [run_match_job]
+    functions = [run_match_job, run_ranker_retrain]
     redis_settings = RedisSettings.from_dsn(REDIS_URL)
     max_tries = MATCH_JOB_MAX_TRIES

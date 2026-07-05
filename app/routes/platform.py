@@ -15,7 +15,7 @@ from app.queue import enqueue_match_job
 from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404
 from app.routes.matches import serialize_match
 from app.services.match_runner import run_match_job_inline
-from app.services.ranking_service import maybe_retrain_ranker
+from app.services.ranking_retrain_scheduler import schedule_ranker_retrain
 
 router = APIRouter()
 
@@ -115,5 +115,5 @@ async def create_match_feedback(
         "created_at": now,
     })
     # Feedback is a training label -> learn from it in the background.
-    background_tasks.add_task(maybe_retrain_ranker, current_user["id"])
+    await schedule_ranker_retrain(current_user["id"], background_tasks)
     return {"id": str(inserted.inserted_id), **model_payload(feedback), "created_at": now}
