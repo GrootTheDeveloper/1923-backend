@@ -289,7 +289,9 @@ class AuthEnforcementTests(unittest.TestCase):
         common.ENABLE_DEMO_MODE = False
         try:
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(common.get_optional_user(None))
+                class MockRequest:
+                    headers = {}
+                asyncio.run(common.get_optional_user(MockRequest(), None))
             self.assertEqual(ctx.exception.status_code, 401)
         finally:
             common.ENABLE_DEMO_MODE = original
@@ -302,7 +304,9 @@ class AuthEnforcementTests(unittest.TestCase):
         original = common.ENABLE_DEMO_MODE
         common.ENABLE_DEMO_MODE = True
         try:
-            user = asyncio.run(common.get_optional_user(None))
+            class MockRequest:
+                headers = {}
+            user = asyncio.run(common.get_optional_user(MockRequest(), None))
             self.assertEqual(user["id"], "demo-user")
         finally:
             common.ENABLE_DEMO_MODE = original
@@ -319,8 +323,10 @@ class AuthEnforcementTests(unittest.TestCase):
         common.ENABLE_DEMO_MODE = True
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="not-a-valid-jwt")
         try:
+            class MockRequest:
+                headers = {}
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(common.get_optional_user(credentials))
+                asyncio.run(common.get_optional_user(MockRequest(), credentials))
             self.assertEqual(ctx.exception.status_code, 401)
         finally:
             common.ENABLE_DEMO_MODE = original

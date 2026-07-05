@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from bson import ObjectId
-from fastapi import Depends, HTTPException, UploadFile, status
+from fastapi import Depends, HTTPException, UploadFile, status, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
@@ -14,7 +14,9 @@ optional_security = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 
-def demo_user() -> dict:
+def demo_user(guest_id: str | None = None) -> dict:
+    if guest_id:
+        return {"id": f"guest-{guest_id}", "username": "Khách", "email": ""}
     return {"id": "demo-user", "username": "Demo", "email": ""}
 
 
@@ -23,11 +25,13 @@ def auth_required_error() -> HTTPException:
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(optional_security),
 ) -> dict:
     if credentials is None:
         if ENABLE_DEMO_MODE:
-            return demo_user()
+            guest_id = request.headers.get("X-Guest-ID")
+            return demo_user(guest_id)
         raise auth_required_error()
 
     try:
