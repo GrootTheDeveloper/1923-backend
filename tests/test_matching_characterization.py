@@ -131,6 +131,16 @@ class MatchingCharacterizationTests(unittest.TestCase):
                     self.assertGreaterEqual(result[key], 0)
                     self.assertLessEqual(result[key], 100)
 
+    def test_prepared_job_context_preserves_scores(self):
+        from app.services.matching_service import prepare_match_job_context
+
+        for name, (candidate, vacancy, options) in SCENARIOS.items():
+            direct = snapshot(calculate_match(candidate, vacancy, **options))
+            context = prepare_match_job_context(vacancy)
+            with_context = snapshot(calculate_match(candidate, vacancy, **options, job_context=context))
+            with self.subTest(scenario=name):
+                self.assertEqual(with_context, direct)
+
     def test_final_blend_weights_sum_to_one(self):
         result = calculate_match(*SCENARIOS["junior_full_match"][:2], **SCENARIOS["junior_full_match"][2])
         weights = result["score_breakdown"]["weight_profile"]

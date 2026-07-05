@@ -54,7 +54,10 @@ class MatchPipelineBatchTests(unittest.IsolatedAsyncioTestCase):
         async def fake_load_active_ranking_model(owner_id):
             return None
 
-        def fake_calculate_match(cv_document, job, semantic_override=None, ranking_model=None):
+        seen_contexts = []
+
+        def fake_calculate_match(cv_document, job, semantic_override=None, ranking_model=None, job_context=None):
+            seen_contexts.append(job_context)
             return {
                 "final_score": 72,
                 "final_recommendation_score": 72,
@@ -101,6 +104,8 @@ class MatchPipelineBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(query["cv_id"]["$in"]), {existing_cv_id, new_cv_id})
 
         self.assertEqual(len(collection.bulk_write_calls), 1)
+        self.assertEqual(len(seen_contexts), 2)
+        self.assertIs(seen_contexts[0], seen_contexts[1])
         bulk_call = collection.bulk_write_calls[0]
         self.assertFalse(bulk_call["ordered"])
         self.assertEqual([op.__class__.__name__ for op in bulk_call["operations"]], ["ReplaceOne", "InsertOne"])

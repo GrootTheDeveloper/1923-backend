@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from collections import Counter
 from typing import List
 
@@ -19,25 +20,55 @@ STATUS_RECOMMENDATIONS = [
 ]
 
 
+@dataclass(frozen=True)
+class MatchJobContext:
+    config: dict
+    job_data: dict
+    raw_job: str
+    requirements_config: list[dict]
+    job_level: str
+    configured_rule_weights: dict[str, float]
+    semantic_job_terms: Counter[str]
+
+
+def prepare_match_job_context(job: dict, scoring_config: dict | None = None) -> MatchJobContext:
+    """Precompute job-side matching inputs once for a whole CV batch."""
+    config = resolve_scoring_config(scoring_config)
+    job_data = job.get("extracted_requirements") or {}
+    raw_job = job.get("raw_text", "")
+    required_skills = normalize_skills(job.get("required_skills") or job_data.get("required_skills", []))
+    preferred_skills = normalize_skills(job.get("preferred_skills") or job_data.get("preferred_skills", []))
+    requirements_config = normalize_requirement_config(
+        job.get("requirements_config") or job_data.get("requirements_config"), required_skills, preferred_skills
+    )
+    job_level = (job.get("level") or job_data.get("job_level") or "Junior").strip().capitalize()
+    return MatchJobContext(
+        config=config,
+        job_data=job_data,
+        raw_job=raw_job,
+        requirements_config=requirements_config,
+        job_level=job_level,
+        configured_rule_weights=rule_weight_profile(config, job_level),
+        semantic_job_terms=term_frequencies(semantic_job_text(job_data, raw_job)),
+    )
+
+
 def calculate_match(
     cv_document: dict,
     job: dict,
     semantic_override: int | None = None,
     ranking_model: dict | None = None,
     scoring_config: dict | None = None,
+    job_context: MatchJobContext | None = None,
 ) -> dict:
-    config = resolve_scoring_config(scoring_config)
+    if job_context is None:
+        job_context = prepare_match_job_context(job, scoring_config)
+    config = job_context.config
     cv_data = cv_document.get("extracted_data") or {}
-    job_data = job.get("extracted_requirements") or {}
+    job_data = job_context.job_data
     raw_cv = cv_document.get("raw_text", "")
-    raw_job = job.get("raw_text", "")
-
-    cv_skills = normalize_skills(cv_data.get("skills", []))
-    required_skills = normalize_skills(job.get("required_skills") or job_data.get("required_skills", []))
-    preferred_skills = normalize_skills(job.get("preferred_skills") or job_data.get("preferred_skills", []))
-    requirements_config = normalize_requirement_config(
-        job.get("requirements_config") or job_data.get("requirements_config"), required_skills, preferred_skills
-    )
+    raw_job = job_context.raw_job
+    requirements_config = job_context.requirements_config
 
     requirement_result = score_requirements(requirements_config, cv_data, raw_cv, config)
     matched_required = [item["name"] for item in requirement_result["items"] if item["matched"] and item["priority"] == "required" and item["type"] == "skill"]
@@ -54,11 +85,11 @@ def calculate_match(
     if semantic_override is not None:
         semantic_score = max(0, min(100, round(semantic_override)))
     else:
-        semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job)
+        semantic_score = score_semantic_similarity(cv_data, job_data, raw_cv, raw_job, job_context.semantic_job_terms)
     penalty_score = requirement_result["penalty_score"]
 
-    job_level = (job.get("level") or job_data.get("job_level") or "Junior").strip().capitalize()
-    configured_rule_weights = rule_weight_profile(config, job_level)
+    job_level = job_context.job_level
+    configured_rule_weights = job_context.configured_rule_weights
     applicable_rule_keys = {
         "experience_project", "education_language_certification", "completeness"
     }
@@ -324,9 +355,11 @@ def requirement_matches(requirement: dict, cv_data: dict, raw_cv: str) -> tuple[
     return matched, find_best_overlap_line(raw_cv, name) if matched else ""
 
 
-def score_semantic_similarity(cv_data: dict, job_data: dict, raw_cv: str, raw_job: str) -> int:
+def score_semantic_similarity(
+    cv_data: dict, job_data: dict, raw_cv: str, raw_job: str, job_terms: Counter[str] | None = None
+) -> int:
     cv_terms = term_frequencies(semantic_cv_text(cv_data, raw_cv))
-    job_terms = term_frequencies(semantic_job_text(job_data, raw_job))
+    job_terms = job_terms if job_terms is not None else term_frequencies(semantic_job_text(job_data, raw_job))
     if not cv_terms or not job_terms:
         return 45
     return round(cosine_similarity(cv_terms, job_terms) * 100)

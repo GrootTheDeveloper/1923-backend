@@ -8,7 +8,7 @@ from pymongo import InsertOne, ReplaceOne
 from app.database import cv_documents_collection, match_results_collection
 from app.services.cv_indexing import job_embedding_text
 from app.services.embedding_service import get_embedding_provider
-from app.services.matching_service import calculate_match
+from app.services.matching_service import calculate_match, prepare_match_job_context
 from app.services.pii_service import mask_profile
 from app.services.ranking_service import load_active_ranking_model
 from app.services.vector_store import search_cv_vectors
@@ -74,6 +74,7 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
 
     job_version = int(job.get("requirements_version", 1))
     ranking_model = await load_active_ranking_model(owner_id)
+    job_context = prepare_match_job_context(job)
     cv_ids = [cv_document["_id"] for cv_document in cvs]
     existing_matches = await match_results_collection.find(
         {"job_id": job["_id"], "cv_id": {"$in": cv_ids}, "owner_id": owner_id}
@@ -90,7 +91,7 @@ async def upsert_matches(job: dict, cvs: list[dict], owner_id: str) -> list[dict
         vector_score = cv_document.get("_vector_score")
         match_payload = calculate_match(
             {**cv_document, "extracted_data": masked_profile}, job,
-            semantic_override=vector_score, ranking_model=ranking_model,
+            semantic_override=vector_score, ranking_model=ranking_model, job_context=job_context,
         )
         original_profile = cv_document.get("extracted_data") or {}
         document = {
