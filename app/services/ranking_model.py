@@ -7,12 +7,13 @@ image light while still *learning from feedback* instead of hardcoding weights.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-# Features are existing sub-scores (0-100), normalized to 0-1 for training.
+# Feature schema v2 intentionally excludes top-level rule_score and semantic_score.
+# Those signals are already blended directly into final_score; using them again
+# inside ml_rank double-counted the same evidence.
+FEATURE_SCHEMA_VERSION = "ltr-v2-nonoverlap"
 FEATURE_KEYS = [
-    "rule_score",
-    "semantic_score",
     "experience_project_score",
     "education_language_certification_score",
     "completeness_score",
@@ -28,16 +29,25 @@ def _sigmoid(z: float) -> float:
     return 1.0 / (1.0 + math.exp(-z))
 
 
-def features_from_breakdown(breakdown: dict) -> List[float]:
-    return [max(0.0, min(1.0, float(breakdown.get(key, 0) or 0) / 100.0)) for key in FEATURE_KEYS]
+def features_from_breakdown(breakdown: dict, feature_keys: List[str] | None = None) -> List[float]:
+    keys = feature_keys or FEATURE_KEYS
+    return [max(0.0, min(1.0, float(breakdown.get(key, 0) or 0) / 100.0)) for key in keys]
 
 
-def predict_ml_rank(model: dict, breakdown: dict) -> int:
+def is_model_compatible(model: dict) -> bool:
+    return (
+        model.get("feature_schema_version") == FEATURE_SCHEMA_VERSION
+        and model.get("feature_keys") == FEATURE_KEYS
+        and len(model.get("weights") or []) == len(FEATURE_KEYS)
+    )
+
+
+def predict_ml_rank(model: dict, breakdown: dict) -> Optional[int]:
+    if not is_model_compatible(model):
+        return None
     weights = model.get("weights") or []
     bias = float(model.get("bias", 0.0))
     x = features_from_breakdown(breakdown)
-    if len(weights) != len(x):
-        return 0
     z = bias + sum(w * xi for w, xi in zip(weights, x))
     return round(_sigmoid(z) * 100)
 

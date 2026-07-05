@@ -5,7 +5,7 @@ import unittest
 from bson import ObjectId
 
 from app.config import MATCH_RECALL_TOP_K
-from app.models.cvmatch import AsyncMatchRequest
+from app.models.cvmatch import AsyncMatchRequest, MatchFeedbackCreate
 from app.routes.platform import serialize_match_job
 from app.routes.jobs import serialize_job
 from app.routes.matches import serialize_match
@@ -223,23 +223,52 @@ class RankingModelTests(unittest.TestCase):
         self.assertLess(ndcg_at_k([0, 1, 2], 3), 1.0)  # worst order scores lower
 
     def test_logistic_learns_separable_labels(self):
-        from app.services.ranking_model import predict_ml_rank, train_logistic
+        from app.services.ranking_model import FEATURE_KEYS, FEATURE_SCHEMA_VERSION, predict_ml_rank, train_logistic
 
-        # High rule_score -> relevant, low -> not. Features are 6-dim (rule first).
-        X = [[0.9, 0.5, 0.5, 0.5, 0.5, 0.5], [0.1, 0.5, 0.5, 0.5, 0.5, 0.5]] * 6
+        # High experience/project evidence -> relevant, low -> not under the v2 schema.
+        X = [[0.9, 0.5, 0.5, 0.5], [0.1, 0.5, 0.5, 0.5]] * 6
         y = [1, 0] * 6
         weights, bias = train_logistic(X, y)
-        model = {"weights": weights, "bias": bias}
-        high = predict_ml_rank(model, {"rule_score": 95, "semantic_score": 50, "confidence_score": 50})
-        low = predict_ml_rank(model, {"rule_score": 5, "semantic_score": 50, "confidence_score": 50})
+        model = {
+            "weights": weights,
+            "bias": bias,
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "feature_keys": FEATURE_KEYS,
+        }
+        high = predict_ml_rank(model, {"experience_project_score": 95, "confidence_score": 50})
+        low = predict_ml_rank(model, {"experience_project_score": 5, "confidence_score": 50})
         self.assertGreater(high, low)
 
     def test_calculate_match_uses_learned_model_source(self):
+        from app.services.ranking_model import FEATURE_KEYS, FEATURE_SCHEMA_VERSION
+
         cv = {"raw_text": "React Git", "extracted_data": {"skills": ["React", "Git"]}}
         job = {"raw_text": "React Git", "required_skills": ["React", "Git"], "extracted_requirements": {}}
-        model = {"version": "lr-test", "weights": [1, 0, 0, 0, 0, 0], "bias": -0.5}
+        model = {
+            "version": "lr-test",
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "feature_keys": FEATURE_KEYS,
+            "weights": [1, 0, 0, 0],
+            "bias": -0.5,
+        }
         result = calculate_match(cv, job, ranking_model=model)
         self.assertEqual(result["score_breakdown"]["ml_rank_source"], "learned:lr-test")
+        self.assertTrue(result["score_breakdown"]["ml_rank_used_in_final_score"])
+
+    def test_incompatible_ranker_model_falls_back_without_zeroing_score(self):
+        cv = {"raw_text": "React Git", "extracted_data": {"skills": ["React", "Git"]}}
+        job = {"raw_text": "React Git", "required_skills": ["React", "Git"], "extracted_requirements": {}}
+        old_model = {"version": "old", "weights": [1, 0, 0, 0, 0, 0], "bias": -0.5}
+        result = calculate_match(cv, job, ranking_model=old_model)
+        breakdown = result["score_breakdown"]
+        self.assertEqual(breakdown["ml_rank_source"], "heuristic_proxy")
+        self.assertGreater(breakdown["ml_rank_score"], 0)
+        self.assertFalse(breakdown["ml_rank_used_in_final_score"])
+
+    def test_feedback_schema_can_record_display_position_for_bias_audit(self):
+        feedback = MatchFeedbackCreate(verdict="good_match", displayed_rank=3)
+        self.assertEqual(feedback.displayed_rank, 3)
+        self.assertEqual(feedback.label_source, "explicit_feedback")
 
 
 class AuthEnforcementTests(unittest.TestCase):

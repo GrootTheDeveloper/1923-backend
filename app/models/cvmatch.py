@@ -54,6 +54,8 @@ class MatchFeedbackCreate(BaseModel):
     reason: Optional[str] = ""
     corrected_skills: Optional[List[str]] = None
     override_score: Optional[int] = Field(default=None, ge=0, le=100)
+    displayed_rank: Optional[int] = Field(default=None, ge=1, le=5000)
+    label_source: Optional[str] = Field(default="explicit_feedback", pattern="^(explicit_feedback|status_change|manual_override)$")
 
 
 class AsyncMatchRequest(BaseModel):

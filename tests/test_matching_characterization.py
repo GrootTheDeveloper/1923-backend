@@ -4,6 +4,7 @@ import unittest
 
 from app.services.matching_service import calculate_match, score_requirements
 from app.services.requirement_service import build_requirement_config, normalize_requirement_config
+from app.services.ranking_model import FEATURE_KEYS, FEATURE_SCHEMA_VERSION
 
 
 def cv(skills, *, summary="", experience=None, projects=None, education=None, raw_text=None):
@@ -80,7 +81,7 @@ SCENARIOS = {
     "learned_ranker": (
         cv(["React", "Git"], summary="Frontend developer", projects=["Built React apps."]),
         job(["React", "Git"]),
-        {"semantic_override": 70, "ranking_model": {"version": "golden-v1", "weights": [1, 0, 0, 0, 0, 0], "bias": -0.5}},
+        {"semantic_override": 70, "ranking_model": {"version": "golden-v1", "feature_schema_version": FEATURE_SCHEMA_VERSION, "feature_keys": FEATURE_KEYS, "weights": [1, 0, 0, 0], "bias": -0.5}},
     ),
     "semantic_override_clamped": (
         cv(["SQL"], summary="Data analyst"),
@@ -91,13 +92,13 @@ SCENARIOS = {
 
 
 EXPECTED = {
-    "junior_full_match": {"final_score": 93, "rule_score": 94, "semantic_score": 88, "ml_rank_score": 100, "confidence_score": 82, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
-    "junior_missing_required": {"final_score": 33, "rule_score": 34, "semantic_score": 35, "ml_rank_score": 27, "confidence_score": 42, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": ["TypeScript"]},
+    "junior_full_match": {"final_score": 90, "rule_score": 94, "semantic_score": 88, "ml_rank_score": 100, "confidence_score": 82, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
+    "junior_missing_required": {"final_score": 36, "rule_score": 34, "semantic_score": 35, "ml_rank_score": 27, "confidence_score": 42, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": ["TypeScript"]},
     "explicit_knockout_miss": {"final_score": 30, "rule_score": 32, "semantic_score": 60, "ml_rank_score": 6, "confidence_score": 50, "match_level": "Weak", "is_knockout_failed": True, "missing_required_skills": ["Kubernetes"]},
-    "empty_jd": {"final_score": 49, "rule_score": 45, "semantic_score": 45, "ml_rank_score": 50, "confidence_score": 67, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": []},
-    "intern_supporting_profile": {"final_score": 77, "rule_score": 73, "semantic_score": 75, "ml_rank_score": 82, "confidence_score": 82, "match_level": "Good", "is_knockout_failed": False, "missing_required_skills": []},
+    "empty_jd": {"final_score": 48, "rule_score": 45, "semantic_score": 45, "ml_rank_score": 50, "confidence_score": 67, "match_level": "Weak", "is_knockout_failed": False, "missing_required_skills": []},
+    "intern_supporting_profile": {"final_score": 75, "rule_score": 73, "semantic_score": 75, "ml_rank_score": 82, "confidence_score": 82, "match_level": "Good", "is_knockout_failed": False, "missing_required_skills": []},
     "senior_experience_gap": {"final_score": 54, "rule_score": 50, "semantic_score": 52, "ml_rank_score": 55, "confidence_score": 72, "match_level": "Partial", "is_knockout_failed": False, "missing_required_skills": []},
-    "learned_ranker": {"final_score": 67, "rule_score": 74, "semantic_score": 70, "ml_rank_score": 56, "confidence_score": 72, "match_level": "Good", "is_knockout_failed": False, "missing_required_skills": []},
+    "learned_ranker": {"final_score": 63, "rule_score": 74, "semantic_score": 70, "ml_rank_score": 44, "confidence_score": 72, "match_level": "Partial", "is_knockout_failed": False, "missing_required_skills": []},
     "semantic_override_clamped": {"final_score": 82, "rule_score": 73, "semantic_score": 100, "ml_rank_score": 82, "confidence_score": 63, "match_level": "Strong", "is_knockout_failed": False, "missing_required_skills": []},
 }
 

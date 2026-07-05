@@ -125,25 +125,33 @@ def calculate_match(
         "completeness_score": completeness_score,
         "confidence_score": confidence_score,
     }
+    ml_rank_score = None
+    ml_rank_source = "heuristic_proxy"
     if ranking_model:
-        ml_rank_score = predict_ml_rank(ranking_model, ml_features)
-        ml_rank_source = f"learned:{ranking_model.get('version', 'v?')}"
-    else:
+        predicted_ml_rank = predict_ml_rank(ranking_model, ml_features)
+        if predicted_ml_rank is not None:
+            ml_rank_score = predicted_ml_rank
+            ml_rank_source = f"learned:{ranking_model.get('version', 'v?')}"
+    if ml_rank_score is None:
         ml_rank_score = score_recruiter_priority(
             rule_score, semantic_score, missing_required, missing_preferred, requirement_result["knockout_misses"]
         )
-        ml_rank_source = "heuristic_proxy"
     # Fairness risk is an informational flag for human review, NOT a penalty:
     # de-scoring a candidate for a gap year or their school would itself be biased.
     fairness = assess_fairness_risk(cv_data)
     fairness_risk_score = fairness["score"]
     final_weights = config["final_blend_weights"]
+    final_weight_keys = {"rule_score", "semantic_similarity", "confidence"}
+    ml_rank_used_in_final_score = ml_rank_source.startswith("learned:")
+    if ml_rank_used_in_final_score:
+        final_weight_keys.add("ml_rank")
+    effective_final_weights = applicable_weights(final_weights, final_weight_keys)
     final_score = round(weighted_score({
         "rule_score": rule_score,
         "semantic_similarity": semantic_score,
         "ml_rank": ml_rank_score,
         "confidence": confidence_score,
-    }, final_weights))
+    }, effective_final_weights))
     
     is_knockout_failed = len(requirement_result["knockout_misses"]) > 0
     if is_knockout_failed:
@@ -207,12 +215,13 @@ def calculate_match(
             "rule_score": rule_score,
             "ml_rank_score": ml_rank_score,
             "ml_rank_source": ml_rank_source,
+            "ml_rank_used_in_final_score": ml_rank_used_in_final_score,
             "confidence_score": confidence_score,
             "fairness_risk_score": fairness_risk_score,
             "final_recommendation_score": final_score,
             "weight_profile": {
                 **effective_rule_weights,
-                **final_weights,
+                **effective_final_weights,
             }
         },
         "requirements_config": requirements_config,

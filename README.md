@@ -29,7 +29,13 @@ Configuration is loaded from the environment. Start from the repository-level `.
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`tests/test_matching_characterization.py` locks representative current outputs. Expected-failure tests document known scoring defects scheduled for Sprint 2.
+`tests/test_matching_characterization.py` locks representative current outputs. `tests/test_ranking_service.py` covers the learning-to-rank hold-out gate.
+
+## Learning-to-rank guardrails
+
+LTR models use a versioned feature schema. Active models with an incompatible schema are skipped, so matching falls back to the heuristic priority proxy instead of returning a misleading zero score. The heuristic proxy is not blended into `final_score`; only a compatible learned model can contribute the `ml_rank` term.
+
+Training reserves a deterministic stratified hold-out set and activates a candidate model only when out-of-sample NDCG or MAP lift is positive. Feedback can include `displayed_rank`; this is stored for position-bias audits because labels collected from ranked lists may reflect exposure, not only candidate quality.
 
 ## CV hash migration
 

@@ -103,15 +103,21 @@ async def create_match_feedback(
     if not match:
         raise HTTPException(status_code=404, detail="Match not found.")
     now = datetime.now(timezone.utc)
+    feedback_payload = model_payload(feedback)
     document = {
-        **model_payload(feedback), "match_id": match_object_id, "job_id": match["job_id"],
+        **feedback_payload, "match_id": match_object_id, "job_id": match["job_id"],
         "cv_id": match["cv_id"], "owner_id": current_user["id"], "created_at": now,
         "model_version": match.get("model_version", "hybrid-mvp-2"),
+        "label_source": feedback_payload.get("label_source") or "explicit_feedback",
+        "position_bias_risk": {
+            "displayed_rank_recorded": feedback_payload.get("displayed_rank") is not None,
+            "note": "Feedback labels may be position-biased; displayed_rank helps audit exposure bias.",
+        },
     }
     inserted = await match_feedback_collection.insert_one(document)
     await audit_logs_collection.insert_one({
         "owner_id": current_user["id"], "action": "match.feedback", "resource_type": "match",
-        "resource_id": match_id, "metadata": {"feedback_id": str(inserted.inserted_id), "verdict": feedback.verdict},
+        "resource_id": match_id, "metadata": {"feedback_id": str(inserted.inserted_id), "verdict": feedback.verdict, "displayed_rank": feedback.displayed_rank},
         "created_at": now,
     })
     # Feedback is a training label -> learn from it in the background.
