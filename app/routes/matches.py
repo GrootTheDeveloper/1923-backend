@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pymongo import ReturnDocument
 
-from app.config import MATCH_RECALL_TOP_K
+from app.config import MATCH_RECALL_TOP_K, RATE_LIMIT_MATCH
 from app.database import jobs_collection, match_results_collection
 from app.models.cvmatch import MatchRunRequest, MatchStatusUpdate
+from app.rate_limit import limiter
 from app.routes.cvmatch_common import get_optional_user, object_id_or_404
 from app.services.match_pipeline import retrieve_candidates, upsert_matches
 from app.services.ranking_retrain_scheduler import schedule_ranker_retrain
@@ -76,16 +77,18 @@ def match_sort_key(document: dict) -> tuple[int, int]:
     priority_score = int(document.get("recruiter_priority_score", final_score))
     return priority_score, final_score
 
+
 @router.post("/run", status_code=status.HTTP_201_CREATED)
-async def run_matching(request: MatchRunRequest, current_user: dict = Depends(get_optional_user)):
+@limiter.limit(RATE_LIMIT_MATCH)
+async def run_matching(request: Request, match_request: MatchRunRequest, current_user: dict = Depends(get_optional_user)):
     """Synchronous matching. Delegates to the shared match pipeline so scoring/retrieval
     logic lives in one place (same code path as the async ``/jobs/{id}/match`` job)."""
-    job_id = object_id_or_404(request.job_id, "Job")
+    job_id = object_id_or_404(match_request.job_id, "Job")
     job = await jobs_collection.find_one({"_id": job_id, "owner_id": current_user["id"]})
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
-    cv_ids = [object_id_or_404(cv_id, "CV") for cv_id in request.cv_ids] if request.cv_ids else None
+    cv_ids = [object_id_or_404(cv_id, "CV") for cv_id in match_request.cv_ids] if match_request.cv_ids else None
     candidates = await retrieve_candidates(job, current_user["id"], cv_ids, top_k=MATCH_RECALL_TOP_K)
     if not candidates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No ready CVs found for matching.")

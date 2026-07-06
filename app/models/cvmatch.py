@@ -2,21 +2,21 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.config import MATCH_RECALL_TOP_K
+from app.config import MATCH_RECALL_TOP_K, MAX_TEXT_INPUT_CHARS
 
 
 class JobCreate(BaseModel):
-    title: Optional[str] = None
-    company: Optional[str] = None
-    level: Optional[str] = None
-    raw_text: str
+    title: Optional[str] = Field(default=None, max_length=200)
+    company: Optional[str] = Field(default=None, max_length=200)
+    level: Optional[str] = Field(default=None, max_length=80)
+    raw_text: str = Field(max_length=MAX_TEXT_INPUT_CHARS)
 
 
 class JobUpdate(BaseModel):
-    title: Optional[str] = None
-    company: Optional[str] = None
-    level: Optional[str] = None
-    raw_text: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=200)
+    company: Optional[str] = Field(default=None, max_length=200)
+    level: Optional[str] = Field(default=None, max_length=80)
+    raw_text: Optional[str] = Field(default=None, max_length=MAX_TEXT_INPUT_CHARS)
     extracted_requirements: Optional[Dict[str, Any]] = None
     requirements_config: Optional[List[Dict[str, Any]]] = None
     required_skills: Optional[List[str]] = None
@@ -46,12 +46,12 @@ class MatchRunRequest(BaseModel):
 
 class MatchStatusUpdate(BaseModel):
     pipeline_status: str = Field(pattern="^(New|Reviewed|Shortlisted|Rejected)$")
-    note: Optional[str] = ""
+    note: Optional[str] = Field(default="", max_length=2000)
 
 
 class MatchFeedbackCreate(BaseModel):
     verdict: str = Field(pattern="^(good_match|bad_match|explanation_incorrect|skill_incorrect|override)$")
-    reason: Optional[str] = ""
+    reason: Optional[str] = Field(default="", max_length=2000)
     corrected_skills: Optional[List[str]] = None
     override_score: Optional[int] = Field(default=None, ge=0, le=100)
     displayed_rank: Optional[int] = Field(default=None, ge=1, le=5000)

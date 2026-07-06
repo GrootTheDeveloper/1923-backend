@@ -286,7 +286,9 @@ class AuthEnforcementTests(unittest.TestCase):
         import app.routes.cvmatch_common as common
 
         original = common.ENABLE_DEMO_MODE
+        original_guest = common.ENABLE_ANON_GUEST_MODE
         common.ENABLE_DEMO_MODE = False
+        common.ENABLE_ANON_GUEST_MODE = False
         try:
             with self.assertRaises(HTTPException) as ctx:
                 class MockRequest:
@@ -295,6 +297,7 @@ class AuthEnforcementTests(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 401)
         finally:
             common.ENABLE_DEMO_MODE = original
+            common.ENABLE_ANON_GUEST_MODE = original_guest
 
     def test_demo_user_returned_when_demo_on(self):
         import asyncio
@@ -358,7 +361,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def test_production_rejects_default_secret_and_demo_mode(self):
         config = self._reload_config(
-            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "dev-secret-key-change-in-production", "ENABLE_DEMO_MODE": "true"}
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "dev-secret-key-change-in-production", "ENABLE_DEMO_MODE": "true", "ENABLE_ANON_GUEST_MODE": "false"}
         )
         try:
             problems = config.validate_runtime_config()
@@ -368,7 +371,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def test_production_accepts_strong_secret_without_demo(self):
         config = self._reload_config(
-            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "a-very-long-random-production-secret", "ENABLE_DEMO_MODE": "false"}
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "a-very-long-random-production-secret", "ENABLE_DEMO_MODE": "false", "ENABLE_ANON_GUEST_MODE": "false"}
         )
         try:
             self.assertEqual(config.validate_runtime_config(), [])
@@ -377,11 +380,27 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def test_production_rejects_short_secret(self):
         config = self._reload_config(
-            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "short", "ENABLE_DEMO_MODE": "false"}
+            {"ENVIRONMENT": "production", "JWT_SECRET_KEY": "short", "ENABLE_DEMO_MODE": "false", "ENABLE_ANON_GUEST_MODE": "false"}
         )
         try:
             problems = config.validate_runtime_config()
             self.assertTrue(any("too short" in p for p in problems))
+        finally:
+            importlib.reload(config)
+
+    def test_production_guest_mode_requires_turnstile(self):
+        config = self._reload_config(
+            {
+                "ENVIRONMENT": "production",
+                "JWT_SECRET_KEY": "a-very-long-random-production-secret",
+                "ENABLE_DEMO_MODE": "false",
+                "ENABLE_ANON_GUEST_MODE": "true",
+                "TURNSTILE_REQUIRED": "false",
+            }
+        )
+        try:
+            problems = config.validate_runtime_config()
+            self.assertTrue(any("TURNSTILE_REQUIRED" in problem for problem in problems))
         finally:
             importlib.reload(config)
 

@@ -12,7 +12,8 @@ from app.config import MAX_PDF_PAGES, RATE_LIMIT_LLM
 from app.rate_limit import limiter
 from app.database import candidates_collection, cv_documents_collection, match_results_collection
 from app.models.cvmatch import CVExtractedDataUpdate
-from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404, validate_pdf_upload
+from app.routes.cvmatch_common import get_optional_user, model_payload, object_id_or_404, read_limited_upload, validate_pdf_upload
+from app.services.abuse_guard import upload_abuse_guard
 from app.services.cv_indexing import index_cv
 from app.services.fairness_service import delete_fairness_attributes, store_fairness_attributes
 from app.services.gemini_extraction import extract_cv_data_hybrid
@@ -20,6 +21,7 @@ from app.services.object_storage import cv_object_key, get_cv_pdf, put_cv_pdf, r
 from app.services.vector_store import delete_cv_vector
 from app.services.pdf_extractor import PDFExtractionError, extract_pdf_text
 from app.services.pii_service import mask_profile
+from app.services.turnstile import verify_turnstile_if_required
 from app.services.skill_service import normalize_skills
 
 router = APIRouter()
@@ -74,82 +76,84 @@ def serialize_cv(document: dict, candidate: dict | None = None, include_full_tex
 @router.post("/import", status_code=status.HTTP_201_CREATED)
 @limiter.limit(RATE_LIMIT_LLM)
 async def upload_cv(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_optional_user)):
-    file_bytes = await file.read()
-    validate_pdf_upload(file, file_bytes)
+    if current_user.get("auth_type") == "guest":
+        await verify_turnstile_if_required(request)
+    async with upload_abuse_guard(current_user["id"], request):
+        file_bytes = await read_limited_upload(file)
+        validate_pdf_upload(file, file_bytes)
 
-    # Idempotency: the same file (by content hash) for the same owner is not
-    # re-parsed. Saves LLM cost and dedupes accidental re-imports.
-    file_hash = hashlib.sha256(file_bytes).hexdigest()
-    existing = await cv_documents_collection.find_one(
-        {"owner_id": current_user["id"], "file_hash": file_hash}
-    )
-    if existing:
-        candidate = (
-            await candidates_collection.find_one({"_id": existing["candidate_id"]})
-            if existing.get("candidate_id")
-            else None
-        )
-        return serialize_cv(existing, candidate)
-
-    try:
-        extracted_pdf = extract_pdf_text(file_bytes, file.filename, max_pages=MAX_PDF_PAGES)
-    except PDFExtractionError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc) or "Could not read this PDF.") from exc
-
-    extracted_data, method, extraction_error = await extract_cv_data_hybrid(extracted_pdf.get("full_text", ""))
-    masked_data, pii_masking = mask_profile(extracted_data)
-    now = datetime.now(timezone.utc)
-    candidate = await upsert_candidate(extracted_data, current_user["id"], now)
-
-    # Persist the raw PDF to object storage so it can be re-parsed later.
-    object_key = await put_cv_pdf(cv_object_key(current_user["id"], file_hash), file_bytes)
-
-    cv_document = {
-        "candidate_id": candidate["_id"],
-        "filename": file.filename,
-        "file_hash": file_hash,
-        "raw_object_key": object_key,
-        "raw_object_stored": object_key is not None,
-        "raw_text": extracted_pdf.get("full_text", ""),
-        "pages": extracted_pdf.get("pages", []),
-        "page_count": extracted_pdf.get("page_count", 0),
-        "char_count": extracted_pdf.get("char_count", 0),
-        "library_used": extracted_pdf.get("library_used", "PyMuPDF"),
-        "extracted_data": extracted_data,
-        "masked_data": masked_data,
-        "pii_masking": pii_masking,
-        "status": "Ready",
-        "extraction_method": method,
-        "extraction_error": extraction_error,
-        "parser_version": PARSER_VERSION,
-        "owner_id": current_user["id"],
-        "created_at": now,
-        "updated_at": now,
-    }
-    try:
-        result = await cv_documents_collection.insert_one(cv_document)
-        cv_document["_id"] = result.inserted_id
-    except DuplicateKeyError:
-        # Another concurrent upload won the owner/hash race. Return the
-        # canonical document instead of turning idempotency into a 500 error.
+        # Idempotency: the same file (by content hash) for the same owner is not
+        # re-parsed. Saves LLM cost and dedupes accidental re-imports.
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
         existing = await cv_documents_collection.find_one(
             {"owner_id": current_user["id"], "file_hash": file_hash}
         )
-        if existing is None:
-            raise
-        existing_candidate = (
-            await candidates_collection.find_one({"_id": existing["candidate_id"]})
-            if existing.get("candidate_id")
-            else None
-        )
-        return serialize_cv(existing, existing_candidate)
-    # Index the masked profile for semantic retrieval (best-effort; PII-safe).
-    await index_cv(str(cv_document["_id"]), current_user["id"], masked_data)
-    # Vault: store sensitive attributes from the UNMASKED profile for offline
-    # fairness measurement only (never read during ranking).
-    await store_fairness_attributes(str(cv_document["_id"]), current_user["id"], extracted_data, extracted_pdf.get("full_text", ""))
-    return serialize_cv(cv_document, candidate)
+        if existing:
+            candidate = (
+                await candidates_collection.find_one({"_id": existing["candidate_id"]})
+                if existing.get("candidate_id")
+                else None
+            )
+            return serialize_cv(existing, candidate)
 
+        try:
+            extracted_pdf = extract_pdf_text(file_bytes, file.filename, max_pages=MAX_PDF_PAGES)
+        except PDFExtractionError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc) or "Could not read this PDF.") from exc
+
+        extracted_data, method, extraction_error = await extract_cv_data_hybrid(extracted_pdf.get("full_text", ""))
+        masked_data, pii_masking = mask_profile(extracted_data)
+        now = datetime.now(timezone.utc)
+        candidate = await upsert_candidate(extracted_data, current_user["id"], now)
+
+        # Persist the raw PDF to object storage so it can be re-parsed later.
+        object_key = await put_cv_pdf(cv_object_key(current_user["id"], file_hash), file_bytes)
+
+        cv_document = {
+            "candidate_id": candidate["_id"],
+            "filename": file.filename,
+            "file_hash": file_hash,
+            "raw_object_key": object_key,
+            "raw_object_stored": object_key is not None,
+            "raw_text": extracted_pdf.get("full_text", ""),
+            "pages": extracted_pdf.get("pages", []),
+            "page_count": extracted_pdf.get("page_count", 0),
+            "char_count": extracted_pdf.get("char_count", 0),
+            "library_used": extracted_pdf.get("library_used", "PyMuPDF"),
+            "extracted_data": extracted_data,
+            "masked_data": masked_data,
+            "pii_masking": pii_masking,
+            "status": "Ready",
+            "extraction_method": method,
+            "extraction_error": extraction_error,
+            "parser_version": PARSER_VERSION,
+            "owner_id": current_user["id"],
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            result = await cv_documents_collection.insert_one(cv_document)
+            cv_document["_id"] = result.inserted_id
+        except DuplicateKeyError:
+            # Another concurrent upload won the owner/hash race. Return the
+            # canonical document instead of turning idempotency into a 500 error.
+            existing = await cv_documents_collection.find_one(
+                {"owner_id": current_user["id"], "file_hash": file_hash}
+            )
+            if existing is None:
+                raise
+            existing_candidate = (
+                await candidates_collection.find_one({"_id": existing["candidate_id"]})
+                if existing.get("candidate_id")
+                else None
+            )
+            return serialize_cv(existing, existing_candidate)
+        # Index the masked profile for semantic retrieval (best-effort; PII-safe).
+        await index_cv(str(cv_document["_id"]), current_user["id"], masked_data)
+        # Vault: store sensitive attributes from the UNMASKED profile for offline
+        # fairness measurement only (never read during ranking).
+        await store_fairness_attributes(str(cv_document["_id"]), current_user["id"], extracted_data, extracted_pdf.get("full_text", ""))
+        return serialize_cv(cv_document, candidate)
 
 @router.get("")
 async def list_cvs(current_user: dict = Depends(get_optional_user)):

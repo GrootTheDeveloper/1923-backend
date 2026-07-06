@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -11,10 +11,13 @@ from app.config import (
     ENABLE_DEMO_MODE,
     FRONTEND_URLS,
     IS_PRODUCTION,
+    MAX_REQUEST_BODY_BYTES,
+    RATE_LIMIT_STATUS,
     validate_runtime_config,
 )
 from app.observability import ObservabilityMiddleware, metrics_response
 from app.rate_limit import limiter
+from app.services.guest_session import attach_guest_cookie_if_needed
 from app.routes import analytics, auth, cvs, demo, documents, jobs, matches, platform, skills
 
 app = FastAPI(
@@ -53,6 +56,23 @@ app.add_middleware(ObservabilityMiddleware)
 
 
 @app.middleware("http")
+async def request_size_guard(request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
+        if size > MAX_REQUEST_BODY_BYTES:
+            max_mb = MAX_REQUEST_BODY_BYTES / (1024 * 1024)
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Request body is too large. Maximum allowed size is {max_mb:.0f} MB."},
+            )
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -61,6 +81,7 @@ async def security_headers(request, call_next):
     response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     if IS_PRODUCTION:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    attach_guest_cookie_if_needed(request, response)
     return response
 
 # Register routes
@@ -76,22 +97,26 @@ app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 
 
 @app.get("/")
-async def root():
+@limiter.limit(RATE_LIMIT_STATUS)
+async def root(request: Request):
     return {"message": "FARM CV-JD PDF Reader API is running"}
 
 
 @app.get("/api/health")
-async def health_check():
+@limiter.limit(RATE_LIMIT_STATUS)
+async def health_check(request: Request):
     return {"status": "healthy"}
 
 
 @app.get("/metrics")
-async def metrics():
+@limiter.limit(RATE_LIMIT_STATUS)
+async def metrics(request: Request):
     return metrics_response()
 
 
 @app.get("/api/ready")
-async def readiness():
+@limiter.limit(RATE_LIMIT_STATUS)
+async def readiness(request):
     """Deep readiness: verify each backing service is actually reachable.
     Returns 503 if the core store (Mongo) is down."""
     from app.database import database

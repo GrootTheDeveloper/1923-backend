@@ -20,6 +20,8 @@ audit_logs_collection = database["audit_logs"]
 fairness_attributes_collection = database["fairness_attributes"]
 # Trained learning-to-rank models (lightweight registry).
 ranking_models_collection = database["ranking_models"]
+# Per-account/global resource counters for abuse protection.
+abuse_limits_collection = database["abuse_limits"]
 
 async def duplicate_cv_file_hash_groups(limit: int = 20) -> list[dict]:
     """Return duplicate owner/hash groups without mutating production data."""
@@ -93,5 +95,7 @@ async def create_indexes() -> None:
         await audit_logs_collection.create_index([("owner_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
         await fairness_attributes_collection.create_index([("owner_id", pymongo.ASCENDING), ("cv_id", pymongo.ASCENDING)], unique=True)
         await ranking_models_collection.create_index([("owner_id", pymongo.ASCENDING), ("active", pymongo.ASCENDING)])
+        await abuse_limits_collection.create_index([("scope", pymongo.ASCENDING), ("period", pymongo.ASCENDING)])
+        await abuse_limits_collection.create_index([("lease_expires_at", pymongo.ASCENDING)])
     except Exception as exc:
         print(f"Error creating database indexes: {exc}")
