@@ -93,7 +93,8 @@ app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
 app.include_router(platform.router, prefix="/api", tags=["Recruitment Platform"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
-app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
+if ENABLE_DEMO_MODE and not IS_PRODUCTION:
+    app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 
 
 @app.get("/")
