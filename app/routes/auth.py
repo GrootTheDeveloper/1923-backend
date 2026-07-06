@@ -1,13 +1,32 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import bcrypt
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from bson import ObjectId
-from app.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, RATE_LIMIT_AUTH
-from app.database import users_collection
+from pymongo.errors import DuplicateKeyError
+from app.config import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    GUEST_SESSION_COOKIE_NAME,
+    JWT_ALGORITHM,
+    JWT_SECRET_KEY,
+    RATE_LIMIT_AUTH,
+)
+from app.database import (
+    audit_logs_collection,
+    candidates_collection,
+    cv_documents_collection,
+    fairness_attributes_collection,
+    jobs_collection,
+    match_feedback_collection,
+    match_jobs_collection,
+    match_results_collection,
+    ranking_models_collection,
+    users_collection,
+)
 from app.models.user import UserRegister, UserLogin, UserResponse, Token
 from app.rate_limit import limiter
+from app.services.guest_session import decode_guest_token
 
 router = APIRouter()
 security = HTTPBearer()
@@ -104,3 +123,86 @@ async def login(request: Request, user: UserLogin):
 async def get_me(current_user: dict = Depends(get_current_user)):
     """Lấy thông tin user hiện tại từ token."""
     return UserResponse(**current_user)
+
+
+# Every Mongo collection that stores an owner_id created during a guest session.
+# Rewriting owner_id on all of them lets the user see their pre-signup work.
+_GUEST_OWNED_COLLECTIONS = [
+    candidates_collection,
+    jobs_collection,
+    match_results_collection,
+    match_jobs_collection,
+    match_feedback_collection,
+    fairness_attributes_collection,
+    ranking_models_collection,
+    audit_logs_collection,
+]
+
+
+@router.post("/claim-guest-session")
+@limiter.limit(RATE_LIMIT_AUTH)
+async def claim_guest_session(
+    request: Request,
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+):
+    """Rewrite guest-owned records to the authenticated user.
+
+    The frontend calls this immediately after register/login so anonymous
+    uploads (CVs, JDs, matches, feedback) are not lost when a user signs in.
+    Idempotent: once the guest cookie is cleared or the guest_id owns nothing,
+    subsequent calls become no-ops.
+    """
+    token = request.cookies.get(GUEST_SESSION_COOKIE_NAME)
+    if not token:
+        return {"claimed": False, "reason": "no_guest_session"}
+    session_id = decode_guest_token(token)
+    if not session_id:
+        response.delete_cookie(GUEST_SESSION_COOKIE_NAME)
+        return {"claimed": False, "reason": "invalid_guest_session"}
+
+    guest_owner_id = f"guest:{session_id}"
+    user_owner_id = current_user["id"]
+
+    # CVs: the (owner_id, file_hash) unique index would reject the update if the
+    # user has already uploaded a matching file. Drop guest duplicates first so
+    # the surviving user copy keeps its history.
+    user_hashes_cursor = cv_documents_collection.find(
+        {"owner_id": user_owner_id, "file_hash": {"$type": "string"}},
+        {"file_hash": 1},
+    )
+    user_hashes = {doc["file_hash"] async for doc in user_hashes_cursor if doc.get("file_hash")}
+    dropped_cvs = 0
+    if user_hashes:
+        drop_result = await cv_documents_collection.delete_many(
+            {"owner_id": guest_owner_id, "file_hash": {"$in": list(user_hashes)}}
+        )
+        dropped_cvs = drop_result.deleted_count
+
+    try:
+        cv_update = await cv_documents_collection.update_many(
+            {"owner_id": guest_owner_id},
+            {"$set": {"owner_id": user_owner_id}},
+        )
+        cv_moved = cv_update.modified_count
+    except DuplicateKeyError:
+        # A concurrent user upload landed the same hash between the dedupe scan
+        # and this update. The guest record now can't merge — drop it.
+        await cv_documents_collection.delete_many({"owner_id": guest_owner_id})
+        cv_moved = 0
+
+    counts: dict[str, int] = {"cv_documents": cv_moved}
+    for coll in _GUEST_OWNED_COLLECTIONS:
+        result = await coll.update_many(
+            {"owner_id": guest_owner_id},
+            {"$set": {"owner_id": user_owner_id}},
+        )
+        counts[coll.name] = result.modified_count
+
+    response.delete_cookie(GUEST_SESSION_COOKIE_NAME)
+    total = sum(counts.values()) + dropped_cvs
+    return {
+        "claimed": total > 0,
+        "moved": counts,
+        "dropped_duplicate_cvs": dropped_cvs,
+    }

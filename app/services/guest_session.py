@@ -27,6 +27,11 @@ def _encode_guest_token(session_id: str) -> str:
     )
 
 
+def decode_guest_token(token: str) -> str | None:
+    """Public wrapper around the JWT decode used for guest session cookies."""
+    return _decode_guest_token(token)
+
+
 def _decode_guest_token(token: str) -> str | None:
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
