@@ -84,6 +84,34 @@ async def get_match_job(match_job_id: str, current_user: dict = Depends(get_opti
     return serialize_match_job(document)
 
 
+@router.get("/match-jobs")
+async def list_match_jobs(current_user: dict = Depends(get_optional_user)):
+    """History of match runs for the current owner, newest first.
+
+    Enriched with the JD title/company so the frontend can show a meaningful
+    row without a second round trip per item.
+    """
+    cursor = match_jobs_collection.find(
+        {"owner_id": current_user["id"]}
+    ).sort("created_at", -1).limit(100)
+    documents = await cursor.to_list(length=100)
+    job_ids = list({doc["job_id"] for doc in documents if doc.get("job_id")})
+    jobs_index: dict = {}
+    if job_ids:
+        job_cursor = jobs_collection.find({"_id": {"$in": job_ids}, "owner_id": current_user["id"]})
+        async for job in job_cursor:
+            jobs_index[job["_id"]] = job
+    payload = []
+    for document in documents:
+        item = serialize_match_job(document)
+        job = jobs_index.get(document.get("job_id"))
+        if job:
+            item["job_title"] = job.get("title", "")
+            item["job_company"] = job.get("company", "")
+        payload.append(item)
+    return payload
+
+
 @router.get("/jobs/{job_id}/matches")
 async def get_job_matches(job_id: str, current_user: dict = Depends(get_optional_user)):
     cursor = match_results_collection.find({
